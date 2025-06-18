@@ -1,17 +1,16 @@
 """Component management command"""
 
 import sys
-from typing import Optional
 
 import click
-from rich.console import Console
-from rich.table import Table
 from rich import box
+from rich.console import Console
 from rich.panel import Panel
+from rich.table import Table
 
+from ..decorators import require_project
 from ...api import query
 from ...api.exceptions import ComponentNotFoundError
-from ..decorators import require_project
 
 console = Console()
 

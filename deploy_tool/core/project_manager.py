@@ -1,11 +1,10 @@
 """Project lifecycle management"""
 
-import os
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, Any
 
 import yaml
 from rich.console import Console

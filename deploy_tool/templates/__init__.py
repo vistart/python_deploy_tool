@@ -1,7 +1,7 @@
 """Built-in templates for deploy-tool"""
 
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Optional
 
 # Template directory path
 TEMPLATES_DIR = Path(__file__).parent

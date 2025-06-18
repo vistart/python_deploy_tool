@@ -1,14 +1,14 @@
 """Storage backend factory"""
 
 import os
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 from .base import StorageBackend
-from .filesystem import FileSystemStorage
 from .bos import BOSStorage
+from .filesystem import FileSystemStorage
 from .s3 import S3Storage
+from ..constants import DEFAULT_STORAGE_TYPE
 from ..core.path_resolver import PathResolver
-from ..constants import DEFAULT_STORAGE_TYPE, SUPPORTED_STORAGE_TYPES
 
 
 class StorageFactory:

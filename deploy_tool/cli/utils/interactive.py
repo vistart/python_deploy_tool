@@ -1,15 +1,13 @@
 """Interactive wizard utilities using Rich"""
 
-import os
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 from rich.console import Console
 from rich.prompt import Prompt, Confirm, IntPrompt
-from rich.panel import Panel
 from rich.table import Table
 
-from ...utils.file_utils import scan_directory, detect_file_types
+from ...utils.file_utils import scan_directory
 
 console = Console()
 

@@ -1,18 +1,16 @@
 """Deploy command implementation"""
 
 import sys
-from pathlib import Path
-from typing import Optional
 
 import click
 from rich.console import Console
-from rich.table import Table
 from rich.prompt import Confirm
+from rich.table import Table
 
-from ...api import Deployer, deploy
-from ...api.exceptions import DeployError, ReleaseNotFoundError, ComponentNotFoundError
 from ..decorators import require_project, dual_mode_command
 from ..utils.output import format_deploy_result
+from ...api import Deployer
+from ...api.exceptions import DeployError, ReleaseNotFoundError, ComponentNotFoundError
 
 console = Console()
 

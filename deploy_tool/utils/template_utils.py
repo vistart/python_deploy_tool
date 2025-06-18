@@ -4,7 +4,7 @@ import os
 import string
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 
 
 def render_template(template: str,

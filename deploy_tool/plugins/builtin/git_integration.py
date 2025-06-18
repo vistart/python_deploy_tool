@@ -1,7 +1,6 @@
 """Git integration plugin"""
 
 from pathlib import Path
-from typing import List, Dict, Any
 
 from ..base import Plugin, PluginInfo, PluginContext, PluginPriority, HookPoint
 from ...utils.git_utils import (

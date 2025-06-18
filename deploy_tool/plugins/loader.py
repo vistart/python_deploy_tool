@@ -3,12 +3,12 @@
 import importlib
 import importlib.util
 import inspect
+import logging
 import sys
 from pathlib import Path
-from typing import List, Dict, Type, Optional
+from typing import List, Dict
 
 from .base import Plugin, PluginManager
-import logging
 
 
 class PluginLoader:
@@ -32,7 +32,6 @@ class PluginLoader:
         Returns:
             Number of plugins loaded
         """
-        from . import builtin
 
         count = 0
         # Import all builtin modules

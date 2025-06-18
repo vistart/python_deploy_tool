@@ -1,13 +1,10 @@
 """Tar processor integration for deploy-tool"""
 
-import asyncio
-from io import BytesIO
-from pathlib import Path
-from typing import List, Optional, Union, Tuple, Callable, Dict, Any
-
 # Import the existing tar_compressor module
 # In real implementation, this would be properly integrated
 import sys
+from pathlib import Path
+from typing import List, Optional, Tuple, Callable, Dict, Any
 
 sys.path.append(str(Path(__file__).parent.parent.parent.parent))
 

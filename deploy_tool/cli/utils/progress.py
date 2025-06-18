@@ -1,10 +1,10 @@
 """Progress display utilities"""
 
-import asyncio
 from contextlib import contextmanager
-from typing import Optional, Generator, Callable
+from typing import Generator, Callable
 
 from rich.console import Console
+from rich.live import Live
 from rich.progress import (
     Progress,
     SpinnerColumn,
@@ -16,7 +16,6 @@ from rich.progress import (
     TransferSpeedColumn,
     TaskID,
 )
-from rich.live import Live
 from rich.table import Table
 
 

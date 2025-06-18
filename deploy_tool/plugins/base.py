@@ -1,12 +1,10 @@
 """Plugin system base classes and manager"""
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Any, Optional, Callable, Type
-import asyncio
-import logging
-from pathlib import Path
+from typing import Dict, List, Any, Optional
 
 
 class PluginPriority(Enum):

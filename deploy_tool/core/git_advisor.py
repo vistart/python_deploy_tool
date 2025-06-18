@@ -6,10 +6,9 @@ from typing import Optional, List, Dict, Any
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.syntax import Syntax
 
-from .path_resolver import PathResolver
 from .manifest_engine import ManifestEngine
+from .path_resolver import PathResolver
 
 
 class GitAdvisor:

@@ -1,6 +1,5 @@
 """Version management utilities"""
 
-import re
 from typing import Optional, Tuple, List
 
 from packaging.version import parse, Version, InvalidVersion

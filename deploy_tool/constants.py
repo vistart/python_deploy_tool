@@ -1,6 +1,5 @@
 """Global constants for deploy-tool"""
 
-from pathlib import Path
 from enum import Enum, auto
 
 # Version related
@@ -127,6 +126,16 @@ VERSION_PATTERN = re.compile(
 )
 
 COMPONENT_TYPE_PATTERN = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]*$")
+
+MAX_COMPONENT_TYPE_LENGTH = 50
+
+RELEASE_VERSION_DATE_PATTERN = re.compile(r"^\d{4}\.\d{2}\.\d{2}$")
+
+RELEASE_VERSION_SEMANTIC_PATTERN = re.compile(
+    r"^(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)"
+    r"(?:-(?P<prerelease>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+    r"(?:\+(?P<build>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
+)
 
 # Time formats
 ISO_TIME_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"

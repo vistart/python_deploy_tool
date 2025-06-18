@@ -2,7 +2,7 @@
 
 import hashlib
 from pathlib import Path
-from typing import Dict, Optional, BinaryIO, Tuple
+from typing import Dict, Optional, BinaryIO, Tuple, List
 import aiofiles
 
 

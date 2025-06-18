@@ -1,6 +1,5 @@
 """Local filesystem storage backend"""
 
-import asyncio
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -10,9 +9,9 @@ import aiofiles
 import aiofiles.os
 
 from .base import StorageBackend
+from ..constants import DEFAULT_CHUNK_SIZE
 from ..core.path_resolver import PathResolver
 from ..utils.hash_utils import calculate_file_hash_async
-from ..constants import DEFAULT_CHUNK_SIZE
 
 
 class FileSystemStorage(StorageBackend):

@@ -7,8 +7,6 @@ from typing import Callable
 import click
 from rich.console import Console
 
-from ...api.exceptions import ProjectNotFoundError
-
 console = Console()
 
 

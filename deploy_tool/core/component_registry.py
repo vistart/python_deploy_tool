@@ -4,12 +4,12 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any
 
-from packaging.version import parse, Version
+from packaging.version import parse
 
-from .path_resolver import PathResolver
 from .manifest_engine import ManifestEngine
+from .path_resolver import PathResolver
 from ..models.component import Component
 
 

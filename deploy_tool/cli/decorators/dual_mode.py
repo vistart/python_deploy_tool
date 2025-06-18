@@ -1,7 +1,7 @@
 """Dual-mode decorator for supporting both CLI and programmatic usage"""
 
 import functools
-from typing import Callable, Any
+from typing import Callable
 
 import click
 

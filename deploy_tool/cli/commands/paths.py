@@ -4,13 +4,11 @@ import sys
 from pathlib import Path
 
 import click
+from rich import box
 from rich.console import Console
 from rich.table import Table
 from rich.tree import Tree
-from rich import box
 
-from ...core import PathResolver
-from ...constants import PathType
 from ..decorators import require_project
 
 console = Console()

@@ -1,15 +1,13 @@
 """Caching plugin for deployment operations"""
 
-import asyncio
 import json
-import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 from ..base import Plugin, PluginInfo, PluginContext, PluginPriority, HookPoint
-from ...utils.hash_utils import calculate_directory_hash, calculate_file_hash
 from ...constants import DEFAULT_CACHE_DIR
+from ...utils.hash_utils import calculate_directory_hash, calculate_file_hash
 
 
 class CachePlugin(Plugin):

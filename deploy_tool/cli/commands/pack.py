@@ -1,19 +1,15 @@
 """Pack command implementation"""
 
 import sys
-from pathlib import Path
-from typing import Optional
 
 import click
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn
-from rich.prompt import Prompt, Confirm
 
-from ...api import Packer, pack
-from ...api.exceptions import PackError, MissingTypeError, MissingVersionError
 from ..decorators import require_project, dual_mode_command
 from ..utils.interactive import PackWizard
 from ..utils.output import format_pack_result, show_git_advice
+from ...api import Packer
+from ...api.exceptions import PackError, MissingTypeError, MissingVersionError
 
 console = Console()
 

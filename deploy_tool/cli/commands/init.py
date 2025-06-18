@@ -7,9 +7,8 @@ import click
 from rich.console import Console
 from rich.prompt import Confirm
 
-from ...core import ProjectManager
-from ...api.exceptions import ProjectNotFoundError
 from ..decorators import ensure_no_project
+from ...core import ProjectManager
 
 console = Console()
 

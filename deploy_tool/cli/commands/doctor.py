@@ -1,20 +1,15 @@
 """System diagnostic command"""
 
-import sys
 import os
-from pathlib import Path
-from typing import Dict, List, Tuple
+import sys
 
 import click
+from rich import box
 from rich.console import Console
 from rich.table import Table
-from rich.panel import Panel
-from rich import box
 
-from ...core import PathResolver, ValidationEngine
-from ...utils.git_utils import check_git_status
-from ...constants import PROJECT_CONFIG_FILE
 from ..decorators import require_project
+from ...utils.git_utils import check_git_status
 
 console = Console()
 

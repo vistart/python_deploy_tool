@@ -46,6 +46,8 @@ from .async_utils import (
     timeout_async,
 )
 
+from typing import List
+
 # Convenience functions exported at package level
 from ..core import PathResolver
 from ..models import Component

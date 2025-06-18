@@ -1,9 +1,8 @@
 """Validation engine for various validation operations"""
 
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional, Dict, Any
 
 from ..constants import (
     VERSION_PATTERN,

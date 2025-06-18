@@ -1,7 +1,6 @@
 """Compression utility functions"""
 
 from pathlib import Path
-from typing import Optional
 
 from .tar_processor import CompressionType
 

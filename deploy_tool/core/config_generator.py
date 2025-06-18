@@ -1,15 +1,14 @@
 """Configuration generator for intelligent config creation"""
 
-import os
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple
 
 import yaml
 from rich.console import Console
-from rich.prompt import Prompt, Confirm
+from rich.prompt import Prompt
 
 from .path_resolver import PathResolver
 from ..constants import (

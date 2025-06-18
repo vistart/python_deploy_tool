@@ -1,7 +1,6 @@
 """Compression adapter interfaces"""
 
 from abc import ABC, abstractmethod
-from pathlib import Path
 from typing import Optional, Dict, Any
 
 from .tar_processor import CompressionType

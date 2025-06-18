@@ -1,14 +1,18 @@
 """Deploy service implementation"""
 
-import asyncio
 import json
 import shutil
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
+from ..api.exceptions import (
+    DeployError,
+    ReleaseNotFoundError,
+    ComponentNotFoundError,
+    ValidationError,
+)
 from ..core import (
-    PathResolver,
     ManifestEngine,
     StorageManager,
     ValidationEngine,
@@ -21,12 +25,6 @@ from ..models import (
     Component,
 )
 from ..models.manifest import ReleaseManifest
-from ..api.exceptions import (
-    DeployError,
-    ReleaseNotFoundError,
-    ComponentNotFoundError,
-    ValidationError,
-)
 
 
 class DeployService:

@@ -1,18 +1,17 @@
 """Publish command implementation"""
 
 import sys
-from typing import List, Optional
 
 import click
 from rich.console import Console
-from rich.table import Table
 from rich.prompt import Confirm
+from rich.table import Table
 
-from ...api import Publisher, publish
-from ...api.exceptions import PublishError, ComponentNotFoundError
-from ...models import Component
 from ..decorators import require_project, dual_mode_command
 from ..utils.output import format_publish_result
+from ...api import Publisher
+from ...api.exceptions import PublishError, ComponentNotFoundError
+from ...models import Component
 
 console = Console()
 

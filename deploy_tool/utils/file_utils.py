@@ -4,7 +4,7 @@ import hashlib
 import os
 import shutil
 from pathlib import Path
-from typing import Optional, Dict, List, Callable, Tuple, Any, Union
+from typing import Optional, Dict, List, Callable, Union
 
 
 def calculate_file_checksum(file_path: Path,
@@ -254,7 +254,6 @@ def create_archive(source_dir: Path,
     Returns:
         Path to created archive
     """
-    import tempfile
 
     # Remove extension from output_file as shutil.make_archive adds it
     base_name = str(output_file.with_suffix(''))

@@ -1,0 +1,78 @@
+# Deploy Tool generated files
+/dist/
+/dist-*/
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.lz4
+*.zip
+
+# Local cache
+.deploy-tool-cache/
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.tox/
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+htmlcov/
+
+# Documentation
+docs/_build/
+docs/.doctrees/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# But keep important deployment files
+!deployment/manifests/*.manifest.json
+!deployment/releases/*.release.json
+!deployment/package-configs/*.yaml
+!.deploy-tool.yaml

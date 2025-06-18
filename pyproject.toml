@@ -1,0 +1,132 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel", "setuptools-scm>=7.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deploy-tool"
+dynamic = ["version"]  # 使用 setuptools-scm 自动版本
+description = "A powerful deployment tool for ML models and algorithms"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Your Team", email = "team@example.com"},
+]
+keywords = ["deployment", "machine-learning", "packaging", "devops"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Operating System :: OS Independent",
+    "Typing :: Typed",
+]
+requires-python = ">=3.8"
+
+dependencies = [
+    "click>=8.0",
+    "rich>=10.0",
+    "pyyaml>=6.0",
+    "aiofiles>=0.8",
+    "python-dateutil>=2.8",
+    "jsonschema>=4.0",
+    "packaging>=21.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.20",
+    "pytest-cov>=4.0",
+    "pytest-mock>=3.10",
+    "black>=22.0",
+    "isort>=5.11",
+    "flake8>=5.0",
+    "mypy>=0.990",
+    "sphinx>=5.0",
+    "sphinx-rtd-theme>=1.2",
+    "tox>=4.0",
+    "pre-commit>=3.0",
+]
+bos = [
+    "bce-python-sdk>=0.8",
+]
+s3 = [
+    "boto3>=1.20",
+]
+lz4 = [
+    "lz4>=4.0",
+]
+all = [
+    "deploy-tool[bos,s3,lz4]",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourteam/deploy-tool"
+Documentation = "https://deploy-tool.readthedocs.io"
+Repository = "https://github.com/yourteam/deploy-tool.git"
+Issues = "https://github.com/yourteam/deploy-tool/issues"
+Changelog = "https://github.com/yourteam/deploy-tool/blob/main/CHANGELOG.md"
+
+[project.scripts]
+deploy-tool = "deploy_tool.cli.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["deploy_tool*"]
+exclude = ["tests*", "docs*", "examples*", "scripts*"]
+
+[tool.setuptools.package-data]
+deploy_tool = [
+    "templates/**/*",
+    "py.typed",
+]
+
+[tool.setuptools_scm]
+write_to = "deploy_tool/_version.py"
+version_scheme = "post-release"
+local_scheme = "no-local-version"
+
+[tool.black]
+line-length = 88
+target-version = ['py38', 'py39', 'py310', 'py311']
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --strict-markers"
+testpaths = ["tests"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "e2e: marks tests as end-to-end tests",
+]
+
+[tool.coverage.run]
+source = ["deploy_tool"]
+omit = ["*/tests/*", "*/__main__.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]

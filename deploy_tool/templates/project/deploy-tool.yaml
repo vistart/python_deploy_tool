@@ -1,0 +1,81 @@
+# Deploy Tool Project Configuration
+# This file identifies the project root and contains project-specific settings
+
+version: "1.0"
+
+# Project information
+project:
+  name: "${project_name}"
+  type: "${project_type}"  # algorithm, model, service, general
+  description: "${project_description}"
+
+# Path configuration (optional - these are the defaults)
+paths:
+  deployment: "./deployment"
+  manifests: "./deployment/manifests"
+  releases: "./deployment/releases"
+  configs: "./deployment/package-configs"
+  dist: "./dist"
+  cache: "./.deploy-tool-cache"
+
+# Default settings for operations
+defaults:
+  # Compression settings
+  compression:
+    algorithm: "gzip"  # gzip, bzip2, xz, lz4
+    level: 6          # 1-9
+
+  # Storage backend
+  storage:
+    type: "filesystem"  # filesystem, bos, s3
+    # Additional storage config can be added here
+    # For BOS:
+    # bucket: "${BOS_BUCKET}"
+    # endpoint: "https://bj.bcebos.com"
+
+# Environment-specific overrides (optional)
+environments:
+  development:
+    paths:
+      dist: "./dist-dev"
+    defaults:
+      compression:
+        level: 3  # Faster compression for dev
+
+  staging:
+    storage:
+      type: "bos"
+      bucket: "staging-packages"
+
+  production:
+    storage:
+      type: "bos"
+      bucket: "prod-packages"
+    defaults:
+      compression:
+        algorithm: "xz"  # Better compression for production
+        level: 9
+
+# Plugin configuration (optional)
+plugins:
+  # Git integration
+  git-integration:
+    enabled: true
+
+  # Caching
+  cache:
+    enabled: true
+    ttl_seconds: 3600
+    max_size_mb: 100
+
+  # Lifecycle hooks
+  lifecycle-hooks:
+    enabled: false
+    hooks_dir: ".deploy-tool/hooks"
+    timeout: 300
+
+# Custom metadata (optional)
+metadata:
+  team: "${team_name}"
+  contact: "${contact_email}"
+  repository: "${git_repository}"

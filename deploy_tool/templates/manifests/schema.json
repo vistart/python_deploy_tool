@@ -1,0 +1,186 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://deploy-tool/schemas/manifest/v1.0",
+  "title": "Deploy Tool Manifest Schema",
+  "description": "Schema for deployment manifest files",
+  "type": "object",
+  "required": ["manifest_version", "package", "archive"],
+  "properties": {
+    "manifest_version": {
+      "type": "string",
+      "description": "Manifest format version",
+      "enum": ["1.0"]
+    },
+    "project": {
+      "type": "object",
+      "description": "Project information",
+      "properties": {
+        "root": {
+          "type": "string",
+          "description": "Project root path (always '.')"
+        },
+        "name": {
+          "type": "string",
+          "description": "Project name"
+        },
+        "config": {
+          "type": "string",
+          "description": "Project config file path"
+        }
+      },
+      "required": ["root", "name"]
+    },
+    "package": {
+      "type": "object",
+      "description": "Package information",
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Package type"
+        },
+        "name": {
+          "type": "string",
+          "description": "Package name"
+        },
+        "version": {
+          "type": "string",
+          "description": "Package version",
+          "pattern": "^\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.-]+)?(\\+[a-zA-Z0-9.-]+)?$"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Package creation timestamp"
+        },
+        "source": {
+          "type": "string",
+          "description": "Source path (relative to project root)"
+        }
+      },
+      "required": ["type", "name", "version", "created_at"]
+    },
+    "archive": {
+      "type": "object",
+      "description": "Archive file information",
+      "properties": {
+        "filename": {
+          "type": "string",
+          "description": "Archive filename"
+        },
+        "location": {
+          "type": "string",
+          "description": "Archive location (relative path)"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Archive size in bytes"
+        },
+        "checksum": {
+          "type": "object",
+          "properties": {
+            "sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$",
+              "description": "SHA256 checksum"
+            }
+          },
+          "required": ["sha256"]
+        },
+        "compression": {
+          "type": "object",
+          "properties": {
+            "algorithm": {
+              "type": "string",
+              "enum": ["gzip", "bzip2", "xz", "lz4", "none"]
+            },
+            "level": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9
+            }
+          }
+        }
+      },
+      "required": ["filename", "location", "size", "checksum"]
+    },
+    "build": {
+      "type": "object",
+      "description": "Build environment information",
+      "properties": {
+        "host": {
+          "type": "string",
+          "description": "Build host"
+        },
+        "user": {
+          "type": "string",
+          "description": "Build user"
+        },
+        "cwd": {
+          "type": "string",
+          "description": "Build working directory (relative)"
+        },
+        "tool_version": {
+          "type": "string",
+          "description": "Deploy tool version"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Build timestamp"
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "description": "List of files in the package",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "File path within archive"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "File size"
+          },
+          "mode": {
+            "type": "string",
+            "description": "File permissions"
+          },
+          "checksum": {
+            "type": "string",
+            "description": "File checksum"
+          }
+        },
+        "required": ["path", "size"]
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Additional metadata",
+      "additionalProperties": true
+    },
+    "storage": {
+      "type": "object",
+      "description": "Storage information (for published components)",
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Storage backend type"
+        },
+        "path": {
+          "type": "string",
+          "description": "Storage path"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Download URL (if available)"
+        }
+      }
+    }
+  }
+}

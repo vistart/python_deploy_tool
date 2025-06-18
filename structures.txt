@@ -1,0 +1,183 @@
+deploy-tool/                    # 项目根目录（Git仓库）
+├── pyproject.toml             # 现代Python打包配置（PEP 517/518）
+├── setup.py                   # 向后兼容的安装脚本
+├── setup.cfg                  # 配置文件（可选）
+├── README.md                  # 项目说明（PyPI展示）
+├── LICENSE                    # MIT许可证
+├── MANIFEST.in                # 指定要包含的非Python文件
+├── requirements.txt           # 生产依赖
+├── requirements-dev.txt       # 开发依赖
+├── CONTRIBUTING.md            # 贡献指南
+├── CHANGELOG.md               # 更新日志
+├── .gitignore                 # Git忽略文件
+├── .coveragerc                # 测试覆盖率配置
+├── .pre-commit-config.yaml    # Pre-commit钩子配置
+├── tox.ini                    # Tox测试配置
+│
+├── .github/                   # GitHub Actions配置
+│   └── workflows/
+│       ├── test.yml          # 测试工作流
+│       ├── release.yml       # 发布工作流
+│       └── build.yml         # 构建工作流
+│
+├── docs/                      # 文档目录（Sphinx）
+│   ├── conf.py               # Sphinx配置
+│   ├── index.rst             # 文档首页
+│   ├── installation.rst      # 安装指南
+│   ├── quickstart.rst        # 快速开始
+│   ├── user_guide/           # 用户指南
+│   │   ├── 部署工具使用文档.md
+│   │   └── 部署工具API参考文档.md
+│   ├── api/                  # API参考
+│   └── development/          # 开发者文档
+│       ├── 部署工具开发者指南.md
+│       ├── 部署工具路径管理设计方案.md
+│       ├── 部署工具模块结构设计方案.md
+│       └── 使用流程20250609.md
+│
+├── tests/                     # 测试套件
+│   ├── __init__.py
+│   ├── conftest.py           # pytest配置
+│   ├── unit/                 # 单元测试
+│   │   ├── __init__.py
+│   │   ├── core/
+│   │   │   ├── test_path_resolver.py
+│   │   │   ├── test_project_manager.py
+│   │   │   ├── test_manifest_engine.py
+│   │   │   └── test_compression.py
+│   │   ├── services/
+│   │   │   ├── test_package_service.py
+│   │   │   ├── test_publish_service.py
+│   │   │   └── test_deploy_service.py
+│   │   └── utils/
+│   │       └── test_file_utils.py
+│   ├── integration/          # 集成测试
+│   │   ├── __init__.py
+│   │   ├── test_pack_workflow.py
+│   │   ├── test_publish_workflow.py
+│   │   └── test_deploy_workflow.py
+│   ├── e2e/                  # 端到端测试
+│   │   ├── __init__.py
+│   │   └── test_full_lifecycle.py
+│   └── fixtures/             # 测试数据
+│       ├── projects/
+│       ├── configs/
+│       └── manifests/
+│
+├── examples/                  # 示例代码
+│   ├── basic_usage.py        # 基础用法示例
+│   ├── advanced_usage.py     # 高级用法示例
+│   └── notebooks/            # Jupyter示例（可选）
+│
+├── scripts/                   # 开发和部署脚本
+│   ├── build.sh              # 构建脚本
+│   ├── release.py            # 发布自动化脚本
+│   └── check_version.py      # 版本检查脚本
+│
+└── deploy_tool/              # 源代码包（Python包）
+    ├── __init__.py           # 包初始化，定义__version__，导出公共API ✓
+    ├── __main__.py           # 支持 python -m deploy_tool ✓
+    ├── py.typed              # PEP 561 类型标记文件 ✓
+    ├── _version.py           # 版本信息（可选，用于自动版本管理） ✓
+    ├── constants.py          # 全局常量定义 ✓
+    │
+    ├── cli/                  # 命令行接口层 ✓
+    │   ├── __init__.py ✓
+    │   ├── main.py           # CLI主入口（click应用） ✓
+    │   ├── commands/         # 命令实现 ✓
+    │   │   ├── __init__.py ✓
+    │   │   ├── init.py       # 项目初始化命令 ✓
+    │   │   ├── pack.py       # 打包命令 ✓
+    │   │   ├── publish.py    # 发布命令 ✓
+    │   │   ├── deploy.py     # 部署命令 ✓
+    │   │   ├── component.py  # 组件管理命令 ✓
+    │   │   ├── release.py    # 发布版本管理命令 ✓
+    │   │   ├── doctor.py     # 诊断命令 ✓
+    │   │   └── paths.py      # 路径管理命令 ✓
+    │   ├── decorators/       # CLI装饰器 ✓
+    │   │   ├── __init__.py ✓
+    │   │   ├── dual_mode.py  # 双模式运行装饰器 ✓
+    │   │   └── project.py    # 项目上下文装饰器 ✓
+    │   └── utils/            # CLI工具函数 ✓
+    │       ├── __init__.py ✓
+    │       ├── interactive.py # 交互式向导（Rich） ✓
+    │       ├── output.py     # 输出格式化 ✓
+    │       └── progress.py   # 进度显示 ✓
+    │
+    ├── api/                  # Python API层 ✓
+    │   ├── __init__.py       # API导出 ✓
+    │   ├── packer.py         # Packer类和pack函数 ✓
+    │   ├── publisher.py      # Publisher类和publish函数 ✓
+    │   ├── deployer.py       # Deployer类和deploy函数 ✓
+    │   ├── query.py          # 查询接口 ✓
+    │   └── exceptions.py     # 异常定义 ✓
+    │
+    ├── services/             # 业务逻辑层 ✓
+    │   ├── __init__.py ✓
+    │   ├── package_service.py     # 打包服务实现 ✓
+    │   ├── publish_service.py     # 发布服务实现 ✓
+    │   ├── deploy_service.py      # 部署服务实现 ✓
+    │   └── conflict_resolver.py   # 冲突处理服务 ✓
+    │
+    ├── core/                 # 核心功能层 ✓
+    │   ├── __init__.py       # 核心功能导出 ✓
+    │   ├── path_resolver.py  # 路径解析器（核心组件）✓
+    │   ├── project_manager.py # 项目管理器 ✓
+    │   ├── manifest_engine.py # 清单引擎 ✓
+    │   ├── storage_manager.py # 存储管理器 ✓
+    │   ├── validation_engine.py # 验证引擎 ✓
+    │   ├── config_generator.py # 配置生成器 ✓
+    │   ├── component_registry.py # 组件注册表 ✓
+    │   ├── git_advisor.py    # Git操作建议器 ✓
+    │   └── compression/      # 压缩模块 ✓
+    │       ├── __init__.py   ✓
+    │       ├── tar_processor.py # 基于tar_compressor的封装 ✓
+    │       ├── adapters.py   # 压缩适配器接口 ✓
+    │       └── utils.py      # 压缩工具函数 ✓
+    │
+    ├── models/               # 数据模型 ✓
+    │   ├── __init__.py       # 模型导出 ✓
+    │   ├── project.py        # 项目模型 ✓
+    │   ├── component.py      # 组件模型 ✓
+    │   ├── manifest.py       # 清单模型 ✓
+    │   ├── release.py        # 发布模型 ✓
+    │   ├── config.py         # 配置模型 ✓
+    │   └── result.py         # 操作结果模型 ✓
+    │
+    ├── storage/              # 存储后端实现 ✓
+    │   ├── __init__.py       # 存储接口导出 ✓
+    │   ├── base.py           # 存储接口基类（ABC） ✓
+    │   ├── filesystem.py     # 本地文件系统存储 ✓
+    │   ├── bos.py            # 百度云BOS存储 ✓
+    │   ├── s3.py             # AWS S3存储（预留） ✓
+    │   └── factory.py        # 存储工厂类 ✓
+    │
+    ├── plugins/              # 插件系统 ✓
+    │   ├── __init__.py       # 插件系统导出 ✓
+    │   ├── base.py           # 插件基类和管理器 ✓
+    │   ├── builtin/          # 内置插件 ✓
+    │   │   ├── __init__.py   ✓
+    │   │   ├── git_integration.py # Git集成插件 ✓
+    │   │   ├── cache.py      # 缓存插件 ✓
+    │   │   └── hooks.py      # 生命周期钩子 ✓
+    │   └── loader.py         # 插件加载器 ✓
+    │
+    ├── utils/                # 通用工具函数 ✓
+    │   ├── __init__.py       # 工具函数导出 ✓
+    │   ├── file_utils.py     # 文件操作工具 ✓
+    │   ├── git_utils.py      # Git操作工具 ✓
+    │   ├── template_utils.py # 模板处理工具 ✓
+    │   ├── version_utils.py  # 版本管理工具 ✓
+    │   ├── hash_utils.py     # 哈希计算工具 ✓
+    │   └── async_utils.py    # 异步工具函数 ✓
+    │
+    └── templates/            # 内置模板文件 ✓
+        ├── __init__.py       ✓
+        ├── project/          # 项目模板 ✓
+        │   ├── deploy-tool.yaml   # 项目配置模板 ✓
+        │   └── gitignore          # .gitignore模板 ✓
+        ├── package/          # 打包配置模板 ✓
+        │   ├── default.yaml       # 默认配置 ✓
+        │   └── auto.yaml          # 自动生成配置 ✓
+        └── manifests/        # 清单模板 ✓
+            └── schema.json        # 清单JSON Schema ✓

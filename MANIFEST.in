@@ -1,0 +1,14 @@
+include README.md
+include LICENSE
+include CHANGELOG.md
+include requirements*.txt
+include tox.ini
+include .coveragerc
+
+recursive-include deploy_tool/templates *
+recursive-include tests *.py *.yaml *.json
+recursive-include docs *.rst *.py *.md conf.py Makefile
+
+global-exclude __pycache__
+global-exclude *.py[co]
+global-exclude .DS_Store

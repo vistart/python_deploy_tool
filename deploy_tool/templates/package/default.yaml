@@ -1,0 +1,99 @@
+# Default Package Configuration Template
+#
+# This template provides a complete example of all available options
+# for packaging components with deploy-tool.
+
+# Package metadata (required)
+package:
+  type: "${type}"           # Component type (e.g., model, config, data, runtime)
+  name: "${name}"           # Package name (defaults to: projectname_type)
+  version: "${version}"     # Version number (semantic versioning recommended)
+  description: "${description}"  # Optional description
+
+# Source configuration (required)
+source:
+  path: "${source_path}"    # Path to files/directory to package
+
+  # Include patterns (optional - defaults to all files)
+  includes:
+    - "*"                   # Include all files by default
+    # - "*.pkl"             # Example: only pickle files
+    # - "models/**"         # Example: all files under models/
+
+  # Exclude patterns (optional)
+  excludes:
+    - "*.log"               # Exclude log files
+    - "__pycache__/"        # Exclude Python cache
+    - ".DS_Store"           # Exclude macOS files
+    - "*.tmp"               # Exclude temporary files
+    - ".git/"               # Exclude git directory
+    # Add more patterns as needed
+
+# Compression settings (optional)
+compression:
+  algorithm: "gzip"         # Options: gzip, bzip2, xz, lz4, none
+  level: 6                  # Compression level 1-9 (1=fast, 9=best)
+
+  # Advanced options
+  # chunk_size: 1048576     # Chunk size in bytes (default: 1MB)
+  # threads: 4              # Number of threads (for supported algorithms)
+
+# Output configuration (optional)
+output:
+  # Output filename template
+  # Available variables: ${package.type}, ${package.version}, ${compression.extension}
+  filename: "${package.type}-${package.version}.tar${compression.extension}"
+
+  # Output directory (relative to project root)
+  path: "./dist/"
+
+  # Overwrite existing files
+  force: false
+
+# Validation rules (optional)
+validation:
+  # Minimum total size
+  min_size: 1               # bytes
+
+  # Maximum total size
+  max_size: 10737418240     # 10GB
+
+  # Required files/patterns
+  required_files:
+    # - "model.pkl"         # Example: must contain model.pkl
+    # - "config.json"       # Example: must contain config.json
+
+  # File count limits
+  min_files: 1
+  # max_files: 10000
+
+# Metadata to include in manifest (optional)
+metadata:
+  # Add any custom metadata here
+  # author: "${author}"
+  # team: "${team}"
+  # git_commit: "${git_commit}"
+  # build_date: "${build_date}"
+
+# Hooks configuration (optional)
+hooks:
+  # Pre-pack script
+  # pre_pack: "./scripts/prepare.sh"
+
+  # Post-pack script
+  # post_pack: "./scripts/notify.sh"
+
+# Environment-specific overrides (optional)
+environments:
+  development:
+    compression:
+      level: 3              # Faster compression for dev
+    output:
+      force: true           # Always overwrite in dev
+
+  production:
+    compression:
+      algorithm: "xz"       # Better compression for production
+      level: 9
+    validation:
+      min_size: 1024        # At least 1KB in production

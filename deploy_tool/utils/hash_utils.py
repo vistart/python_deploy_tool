@@ -2,7 +2,8 @@
 
 import hashlib
 from pathlib import Path
-from typing import Dict, Optional, BinaryIO
+from typing import Dict, Optional, BinaryIO, Tuple
+import aiofiles
 
 
 def calculate_sha256(file_path: Path, chunk_size: int = 8192) -> str:
@@ -229,4 +230,150 @@ def stream_hash(file_obj: BinaryIO,
     return hash_func.hexdigest()
 
 
-from typing import Tuple
+def calculate_file_hash(file_path: Path,
+                        algorithm: str = "sha256",
+                        chunk_size: int = 8192) -> str:
+    """
+    Calculate file hash (alias for consistency)
+
+    Args:
+        file_path: Path to file
+        algorithm: Hash algorithm
+        chunk_size: Read chunk size
+
+    Returns:
+        Hex digest string
+    """
+    if algorithm.lower() == "sha256":
+        return calculate_sha256(file_path, chunk_size)
+    elif algorithm.lower() == "md5":
+        return calculate_md5(file_path, chunk_size)
+    else:
+        hash_func = hashlib.new(algorithm)
+        with open(file_path, 'rb') as f:
+            while chunk := f.read(chunk_size):
+                hash_func.update(chunk)
+        return hash_func.hexdigest()
+
+
+async def calculate_file_hash_async(file_path: Path,
+                                    algorithm: str = "sha256",
+                                    chunk_size: int = 8192) -> str:
+    """
+    Calculate file hash asynchronously
+
+    Args:
+        file_path: Path to file
+        algorithm: Hash algorithm
+        chunk_size: Read chunk size
+
+    Returns:
+        Hex digest string
+    """
+    hash_func = hashlib.new(algorithm)
+
+    async with aiofiles.open(file_path, 'rb') as f:
+        while True:
+            chunk = await f.read(chunk_size)
+            if not chunk:
+                break
+            hash_func.update(chunk)
+
+    return hash_func.hexdigest()
+
+
+def compare_files(file1: Path, file2: Path, algorithm: str = "sha256") -> bool:
+    """
+    Compare two files by hash
+
+    Args:
+        file1: First file path
+        file2: Second file path
+        algorithm: Hash algorithm
+
+    Returns:
+        True if files are identical
+    """
+    # Quick size check first
+    if file1.stat().st_size != file2.stat().st_size:
+        return False
+
+    # Compare hashes
+    hash1 = calculate_file_hash(file1, algorithm)
+    hash2 = calculate_file_hash(file2, algorithm)
+
+    return hash1 == hash2
+
+
+def generate_checksum_file(directory: Path,
+                           output_file: Path,
+                           algorithm: str = "sha256",
+                           pattern: str = "*") -> int:
+    """
+    Generate checksum file for directory
+
+    Args:
+        directory: Directory to scan
+        output_file: Output checksum file
+        algorithm: Hash algorithm
+        pattern: File pattern to match
+
+    Returns:
+        Number of files processed
+    """
+    count = 0
+
+    with open(output_file, 'w') as f:
+        for file_path in sorted(directory.rglob(pattern)):
+            if file_path.is_file():
+                checksum = calculate_file_hash(file_path, algorithm)
+                relative_path = file_path.relative_to(directory)
+                f.write(f"{checksum}  {relative_path}\n")
+                count += 1
+
+    return count
+
+
+def verify_checksum_file(directory: Path,
+                         checksum_file: Path,
+                         algorithm: str = "sha256") -> Tuple[int, int, List[str]]:
+    """
+    Verify files against checksum file
+
+    Args:
+        directory: Base directory
+        checksum_file: Checksum file path
+        algorithm: Hash algorithm
+
+    Returns:
+        Tuple of (total_files, valid_files, invalid_files_list)
+    """
+    total = 0
+    valid = 0
+    invalid_files = []
+
+    with open(checksum_file, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+
+            parts = line.split('  ', 1)
+            if len(parts) != 2:
+                continue
+
+            expected_checksum, relative_path = parts
+            file_path = directory / relative_path
+
+            total += 1
+
+            if file_path.exists():
+                actual_checksum = calculate_file_hash(file_path, algorithm)
+                if actual_checksum == expected_checksum:
+                    valid += 1
+                else:
+                    invalid_files.append(str(relative_path))
+            else:
+                invalid_files.append(str(relative_path))
+
+    return total, valid, invalid_files

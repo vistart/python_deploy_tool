@@ -80,18 +80,18 @@ def is_binary_file(file_path: Path, sample_size: int = 512) -> bool:
             return True
 
         # Check if mostly printable
-        text_chars = bytearray({7, 8, 9, 10, 12, 13, 27} | set(range(0x20, 0x100)))
-        non_text = sample.translate(None, text_chars)
+        text_characters = bytearray({7, 8, 9, 10, 12, 13, 27} | set(range(0x20, 0x100)))
+        non_text = len([b for b in sample if b not in text_characters])
 
         # If more than 30% non-text, consider binary
-        return len(non_text) / len(sample) > 0.3
+        return non_text / len(sample) > 0.3 if sample else False
 
     except Exception:
-        return True
+        return False
 
 
 def count_files(directory: Path,
-                pattern: str = "*",
+                pattern: str = '*',
                 recursive: bool = True) -> int:
     """
     Count files in directory
@@ -99,7 +99,7 @@ def count_files(directory: Path,
     Args:
         directory: Directory path
         pattern: File pattern
-        recursive: Whether to count recursively
+        recursive: Include subdirectories
 
     Returns:
         Number of files
@@ -111,66 +111,38 @@ def count_files(directory: Path,
 
 
 def scan_directory(directory: Path,
-                   excludes: Optional[List[str]] = None,
-                   includes: Optional[List[str]] = None) -> List[Tuple[Path, Dict[str, Any]]]:
+                   exclude_patterns: Optional[List[str]] = None,
+                   include_hidden: bool = False) -> List[Path]:
     """
-    Scan directory and return file information
+    Scan directory for files
 
     Args:
         directory: Directory to scan
-        excludes: Patterns to exclude
-        includes: Patterns to include (if specified, only these are included)
+        exclude_patterns: Patterns to exclude
+        include_hidden: Include hidden files
 
     Returns:
-        List of (path, info) tuples
+        List of file paths
     """
     import fnmatch
 
-    excludes = excludes or []
-    includes = includes or ['*']
+    exclude_patterns = exclude_patterns or []
+    files = []
 
-    results = []
+    for path in directory.rglob('*'):
+        if path.is_file():
+            # Skip hidden files if requested
+            if not include_hidden and any(part.startswith('.') for part in path.parts):
+                continue
 
-    for file_path in directory.rglob('*'):
-        if not file_path.is_file():
-            continue
+            # Check exclude patterns
+            relative_path = path.relative_to(directory)
+            if any(fnmatch.fnmatch(str(relative_path), pattern) for pattern in exclude_patterns):
+                continue
 
-        # Get relative path
-        rel_path = file_path.relative_to(directory)
-        rel_str = str(rel_path)
+            files.append(path)
 
-        # Check excludes
-        excluded = False
-        for pattern in excludes:
-            if fnmatch.fnmatch(rel_str, pattern) or fnmatch.fnmatch(file_path.name, pattern):
-                excluded = True
-                break
-
-        if excluded:
-            continue
-
-        # Check includes
-        included = False
-        for pattern in includes:
-            if fnmatch.fnmatch(rel_str, pattern) or fnmatch.fnmatch(file_path.name, pattern):
-                included = True
-                break
-
-        if not included and includes != ['*']:
-            continue
-
-        # Get file info
-        stat = file_path.stat()
-        info = {
-            'size': stat.st_size,
-            'mtime': stat.st_mtime,
-            'is_binary': is_binary_file(file_path),
-            'extension': file_path.suffix.lower(),
-        }
-
-        results.append((file_path, info))
-
-    return results
+    return sorted(files)
 
 
 def copy_with_progress(src: Path,
@@ -183,23 +155,23 @@ def copy_with_progress(src: Path,
     Args:
         src: Source file
         dst: Destination file
-        callback: Progress callback(copied_bytes, total_bytes)
+        callback: Progress callback(bytes_copied, total_bytes)
         chunk_size: Copy chunk size
     """
+    total_size = src.stat().st_size
+    bytes_copied = 0
+
     # Ensure destination directory exists
     dst.parent.mkdir(parents=True, exist_ok=True)
-
-    total_size = src.stat().st_size
-    copied = 0
 
     with open(src, 'rb') as fsrc:
         with open(dst, 'wb') as fdst:
             while chunk := fsrc.read(chunk_size):
                 fdst.write(chunk)
-                copied += len(chunk)
+                bytes_copied += len(chunk)
 
                 if callback:
-                    callback(copied, total_size)
+                    callback(bytes_copied, total_size)
 
     # Copy file permissions
     shutil.copystat(src, dst)
@@ -213,7 +185,7 @@ def safe_remove(path: Path) -> bool:
         path: Path to remove
 
     Returns:
-        True if removed successfully
+        True if successful
     """
     try:
         if path.is_file():
@@ -225,23 +197,107 @@ def safe_remove(path: Path) -> bool:
         return False
 
 
-def ensure_directory(path: Path) -> Path:
+def ensure_parent_dir(file_path: Path) -> Path:
     """
-    Ensure directory exists
+    Ensure parent directory exists
 
     Args:
-        path: Directory path
+        file_path: File path
 
     Returns:
-        The path
+        Parent directory path
     """
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+    parent = file_path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    return parent
 
 
-def get_directory_size(directory: Path) -> int:
+def get_relative_paths(directory: Path,
+                       files: List[Path]) -> List[str]:
     """
-    Get total size of directory
+    Get relative paths for files
+
+    Args:
+        directory: Base directory
+        files: List of file paths
+
+    Returns:
+        List of relative path strings
+    """
+    relative_paths = []
+
+    for file_path in files:
+        try:
+            rel_path = file_path.relative_to(directory)
+            # Always use forward slashes
+            relative_paths.append(str(rel_path).replace(os.sep, '/'))
+        except ValueError:
+            # File is outside directory
+            relative_paths.append(str(file_path))
+
+    return relative_paths
+
+
+def create_archive(source_dir: Path,
+                   output_file: Path,
+                   format: str = 'gztar',
+                   base_dir: Optional[str] = None) -> Path:
+    """
+    Create archive from directory
+
+    Args:
+        source_dir: Source directory
+        output_file: Output archive path
+        format: Archive format (gztar, bztar, xztar, tar, zip)
+        base_dir: Base directory name in archive
+
+    Returns:
+        Path to created archive
+    """
+    import tempfile
+
+    # Remove extension from output_file as shutil.make_archive adds it
+    base_name = str(output_file.with_suffix(''))
+
+    # Create archive
+    archive_path = shutil.make_archive(
+        base_name=base_name,
+        format=format,
+        root_dir=source_dir,
+        base_dir=base_dir
+    )
+
+    return Path(archive_path)
+
+
+def extract_archive(archive_path: Path,
+                    extract_to: Path,
+                    format: Optional[str] = None) -> Path:
+    """
+    Extract archive
+
+    Args:
+        archive_path: Archive file path
+        extract_to: Extraction directory
+        format: Archive format (auto-detect if None)
+
+    Returns:
+        Path to extracted content
+    """
+    extract_to.mkdir(parents=True, exist_ok=True)
+
+    shutil.unpack_archive(
+        filename=str(archive_path),
+        extract_dir=str(extract_to),
+        format=format
+    )
+
+    return extract_to
+
+
+def calculate_directory_size(directory: Path) -> int:
+    """
+    Calculate total size of directory
 
     Args:
         directory: Directory path
@@ -249,38 +305,111 @@ def get_directory_size(directory: Path) -> int:
     Returns:
         Total size in bytes
     """
-    total = 0
-    for file_path in directory.rglob('*'):
-        if file_path.is_file():
-            total += file_path.stat().st_size
-    return total
+    total_size = 0
+
+    for path in directory.rglob('*'):
+        if path.is_file():
+            total_size += path.stat().st_size
+
+    return total_size
 
 
-def find_files(directory: Path,
-               pattern: str,
-               recursive: bool = True) -> List[Path]:
+def find_files_by_extension(directory: Path,
+                            extensions: List[str],
+                            recursive: bool = True) -> List[Path]:
     """
-    Find files matching pattern
+    Find files by extension
 
     Args:
-        directory: Directory to search
-        pattern: File pattern (supports wildcards)
-        recursive: Whether to search recursively
+        directory: Search directory
+        extensions: List of extensions (with or without dot)
+        recursive: Search recursively
 
     Returns:
-        List of matching file paths
+        List of matching files
     """
-    if recursive:
-        return [p for p in directory.rglob(pattern) if p.is_file()]
-    else:
-        return [p for p in directory.glob(pattern) if p.is_file()]
+    # Normalize extensions
+    extensions = [ext if ext.startswith('.') else f'.{ext}' for ext in extensions]
+
+    files = []
+    glob_func = directory.rglob if recursive else directory.glob
+
+    for path in glob_func('*'):
+        if path.is_file() and path.suffix.lower() in extensions:
+            files.append(path)
+
+    return sorted(files)
+
+
+def get_mime_type(file_path: Path) -> str:
+    """
+    Get MIME type of file
+
+    Args:
+        file_path: File path
+
+    Returns:
+        MIME type string
+    """
+    import mimetypes
+
+    mime_type, _ = mimetypes.guess_type(str(file_path))
+    return mime_type or 'application/octet-stream'
+
+
+def detect_file_types(directory: Path) -> Dict[str, List[Path]]:
+    """
+    Detect and categorize file types in directory
+
+    Args:
+        directory: Directory to analyze
+
+    Returns:
+        Dictionary mapping file types to file lists
+    """
+    file_types = {
+        'code': [],
+        'config': [],
+        'data': [],
+        'model': [],
+        'document': [],
+        'image': [],
+        'archive': [],
+        'other': []
+    }
+
+    # Define extensions for each category
+    extensions_map = {
+        'code': ['.py', '.js', '.java', '.cpp', '.c', '.h', '.go', '.rs', '.ts', '.jsx', '.tsx'],
+        'config': ['.yaml', '.yml', '.json', '.xml', '.ini', '.conf', '.cfg', '.toml'],
+        'data': ['.csv', '.tsv', '.parquet', '.feather', '.h5', '.hdf5', '.npz', '.npy'],
+        'model': ['.pth', '.pt', '.pkl', '.joblib', '.onnx', '.pb', '.h5', '.keras', '.safetensors'],
+        'document': ['.md', '.txt', '.rst', '.doc', '.docx', '.pdf', '.tex'],
+        'image': ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg', '.webp'],
+        'archive': ['.zip', '.tar', '.gz', '.bz2', '.xz', '.7z', '.rar']
+    }
+
+    # Reverse mapping for efficient lookup
+    ext_to_type = {}
+    for file_type, extensions in extensions_map.items():
+        for ext in extensions:
+            ext_to_type[ext.lower()] = file_type
+
+    # Scan and categorize files
+    for file_path in directory.rglob('*'):
+        if file_path.is_file():
+            suffix = file_path.suffix.lower()
+            file_type = ext_to_type.get(suffix, 'other')
+            file_types[file_type].append(file_path)
+
+    return file_types
 
 
 def atomic_write(file_path: Path,
                  content: Union[str, bytes],
                  mode: str = 'w') -> None:
     """
-    Write file atomically (write to temp, then rename)
+    Write file atomically
 
     Args:
         file_path: Target file path
@@ -289,27 +418,18 @@ def atomic_write(file_path: Path,
     """
     import tempfile
 
-    # Write to temporary file in same directory
-    temp_fd, temp_path = tempfile.mkstemp(
-        dir=file_path.parent,
-        prefix=f".{file_path.name}.",
-        suffix='.tmp'
-    )
+    # Write to temporary file first
+    temp_fd, temp_path = tempfile.mkstemp(dir=file_path.parent)
 
     try:
         with os.fdopen(temp_fd, mode) as f:
             f.write(content)
 
         # Atomic rename
-        Path(temp_path).replace(file_path)
+        os.replace(temp_path, file_path)
 
     except Exception:
         # Clean up temp file on error
-        try:
+        if os.path.exists(temp_path):
             os.unlink(temp_path)
-        except:
-            pass
         raise
-
-
-from typing import Union

@@ -1,7 +1,5 @@
 """Tar processor integration for deploy-tool"""
 
-# Import the existing tar_compressor module
-# In real implementation, this would be properly integrated
 import sys
 from pathlib import Path
 from typing import List, Optional, Tuple, Callable, Dict, Any
@@ -14,7 +12,6 @@ try:
         CompressionType as _CompressionType,
         OperationStats
     )
-
     HAS_TAR_COMPRESSOR = True
 except ImportError:
     HAS_TAR_COMPRESSOR = False
@@ -23,7 +20,7 @@ except ImportError:
     OperationStats = None
 
 from ..manifest_engine import ManifestEngine
-from ...models.manifest import Manifest, FileEntry
+from ...models.manifest import Manifest
 
 # Re-export CompressionType
 if HAS_TAR_COMPRESSOR:
@@ -31,7 +28,6 @@ if HAS_TAR_COMPRESSOR:
 else:
     # Fallback enum if tar_compressor not available
     from enum import Enum
-
 
     class CompressionType(Enum):
         GZIP = "gz"
@@ -111,41 +107,9 @@ class TarProcessor:
         manifest = None
 
         if self.manifest_engine and stats:
-            # Create file entries from packed files
-            file_entries = []
-
-            # Note: In a full implementation, we would track individual files
-            # For now, we'll create a summary entry
-            for source_path in source_paths:
-                if source_path.is_file():
-                    entry = FileEntry(
-                        path=str(source_path.name),  # Use relative path in manifest
-                        size=source_path.stat().st_size,
-                        checksum="",  # Would calculate in full implementation
-                        # is_binary=True
-                    )
-                    file_entries.append(entry)
-                else:
-                    # For directories, would enumerate all files
-                    # This is a simplified version
-                    entry = FileEntry(
-                        path=str(source_path.name),
-                        size=stats.total_size,
-                        checksum="",
-                        # is_binary=True
-                    )
-                    file_entries.append(entry)
-
-            # Create manifest
-            manifest = self.manifest_engine.create_manifest(
-                package_type="",  # Would be set by caller
-                package_name="",  # Would be set by caller
-                version="",  # Would be set by caller
-                source_path=source_paths[0] if source_paths else None,
-                archive_path=output_path,
-                metadata=metadata,
-                # files=file_entries
-            )
+            # Create manifest without detailed file tracking
+            # The manifest will be created by the caller with proper parameters
+            manifest = None
 
         return output_path, manifest
 
@@ -167,16 +131,43 @@ class TarProcessor:
 
         # List archive contents to verify it's readable
         contents = await self._processor.list_archive_contents(archive_path)
-
         if contents is None:
             return False
 
-        # If we have a manifest, verify checksum
-        if manifest and 'checksum' in manifest.archive:
-            # This would verify against the manifest checksum
-            pass
+        # If manifest provided, verify checksum
+        if manifest and hasattr(manifest, 'archive'):
+            archive_info = manifest.archive
+            if 'checksum' in archive_info and 'sha256' in archive_info['checksum']:
+                expected_checksum = archive_info['checksum']['sha256']
+                # Calculate actual checksum
+                actual_checksum = self._calculate_file_checksum(archive_path)
+                if actual_checksum != expected_checksum:
+                    return False
 
         return True
+
+    async def extract_archive(self,
+                              archive_path: Path,
+                              output_dir: Path,
+                              strip_components: int = 0) -> bool:
+        """
+        Extract archive contents
+
+        Args:
+            archive_path: Path to archive file
+            output_dir: Output directory
+            strip_components: Number of path components to strip
+
+        Returns:
+            True if extraction successful
+        """
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        return await self._processor.decompress_with_progress(
+            archive_path,
+            output_dir,
+            strip_components=strip_components
+        )
 
     async def extract_with_progress(self,
                                     archive_path: Path,
@@ -209,22 +200,41 @@ class TarProcessor:
         contents = await self._processor.list_archive_contents(archive_path)
         return contents or []
 
-    @staticmethod
-    def detect_compression_type(file_path: Path) -> CompressionType:
+    def _calculate_file_checksum(self, filepath: Path, algorithm: str = 'sha256') -> str:
         """
-        Detect compression type from file
+        Calculate file checksum
 
         Args:
-            file_path: File path
+            filepath: Path to file
+            algorithm: Hash algorithm to use
 
         Returns:
-            Detected compression type
+            Hex digest of file checksum
         """
-        # Use the processor's detection logic
-        processor = _AsyncTarProcessor()
-        return processor._detect_compression_type(file_path)
+        import hashlib
 
-    # Static methods
+        hash_obj = hashlib.new(algorithm)
+        with open(filepath, 'rb') as f:
+            while chunk := f.read(8192):
+                hash_obj.update(chunk)
+
+        return hash_obj.hexdigest()
+
+    @property
+    def compression_level(self) -> int:
+        """Get compression level"""
+        return self._processor.compression_level
+
+    @compression_level.setter
+    def compression_level(self, value: int) -> None:
+        """Set compression level"""
+        self._processor.compression_level = value
+
+    @property
+    def stats(self) -> Optional[OperationStats]:
+        """Get operation statistics"""
+        return self._processor.stats
+
     @staticmethod
     def get_file_extension(compression_type: CompressionType) -> str:
         """
@@ -237,20 +247,6 @@ class TarProcessor:
             File extension (e.g., '.gz', '.bz2')
         """
         return f".{compression_type.value}" if compression_type.value else ""
-
-    @property
-    def stats(self) -> Optional[OperationStats]:
-        """
-        Get operation statistics
-
-        Returns:
-            Operation statistics or None
-        """
-        return self._processor.stats if self._processor else None
-
-    def get_stats(self) -> Optional[OperationStats]:
-        """Get operation statistics"""
-        return self._processor.stats
 
     @staticmethod
     def is_compression_supported(compression_type: CompressionType) -> bool:
@@ -281,8 +277,25 @@ class TarProcessor:
 
         return _AsyncTarProcessor.get_supported_algorithms()
 
-    # Convenience methods for common operations
+    @staticmethod
+    def detect_compression_type(file_path: Path) -> CompressionType:
+        """
+        Detect compression type from file
 
+        Args:
+            file_path: File path
+
+        Returns:
+            Detected compression type
+        """
+        if not HAS_TAR_COMPRESSOR:
+            return CompressionType.NONE
+
+        # Use the processor's detection logic
+        processor = _AsyncTarProcessor()
+        return processor._detect_compression_type(file_path)
+
+    # Convenience methods for common operations
     async def pack_directory(self,
                              directory: Path,
                              output_file: Path,
@@ -310,34 +323,3 @@ class TarProcessor:
             output_file,
             use_relative_paths=use_relative_paths
         )
-
-
-    async def pack_files(self,
-                         files: List[Path],
-                         output_file: Path,
-                         use_relative_paths: bool = True) -> bool:
-        """
-        Pack multiple files with relative path support (convenience method)
-
-        Args:
-            files: List of files to pack
-            output_file: Output file path
-            use_relative_paths: Whether to use relative paths in the archive
-
-        Returns:
-            True if successful
-        """
-        # Validate all files exist
-        for file_path in files:
-            if not file_path.exists():
-                raise FileNotFoundError(f"File not found: {file_path}")
-
-        return await self._processor.compress_with_progress(
-            files,
-            output_file,
-            use_relative_paths=use_relative_paths
-        )
-
-    def format_size(self, size: int) -> str:
-        """Format size in human-readable format"""
-        return self._processor._format_size(size)

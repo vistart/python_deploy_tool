@@ -16,6 +16,15 @@ from .git_utils import (
     get_git_status,
     is_file_tracked,
     get_remote_url,
+    check_git_status,
+    get_uncommitted_files,
+    suggest_git_commands,
+    get_last_commit_date,
+    get_file_history,
+    is_dirty,
+    get_ahead_behind,
+    add_files,
+    init_git_repo,
 )
 
 from .template_utils import (
@@ -153,6 +162,15 @@ __all__ = [
     "get_git_status",
     "is_file_tracked",
     "get_remote_url",
+    "check_git_status",
+    "get_uncommitted_files",
+    "suggest_git_commands",
+    "get_last_commit_date",
+    "get_file_history",
+    "is_dirty",
+    "get_ahead_behind",
+    "add_files",
+    "init_git_repo",
 
     # Template utilities
     "render_template",

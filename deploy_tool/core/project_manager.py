@@ -70,6 +70,8 @@ class ProjectManager:
     async def init_project(self,
                            project_path: Path,
                            project_name: Optional[str] = None,
+                           project_type: Optional[str] = None,
+                           description: Optional[str] = None,
                            interactive: bool = True) -> None:
         """
         Initialize new project
@@ -77,6 +79,8 @@ class ProjectManager:
         Args:
             project_path: Path to project directory
             project_name: Project name (optional)
+            project_type: Project type (optional) - algorithm, model, service, general
+            description: Project description (optional)
             interactive: Whether to run in interactive mode
         """
         project_path = Path(project_path).resolve()
@@ -87,15 +91,20 @@ class ProjectManager:
             self.console.print(f"[red]Project already initialized at {project_path}[/red]")
             return
 
+        # Determine if we need interactive mode
+        # If all required parameters are provided, skip interactive mode
+        if project_type and description:
+            interactive = False
+
         # Interactive mode
         if interactive:
             config = await self._interactive_init(project_path, project_name)
         else:
-            # Use defaults
+            # Use provided parameters or defaults
             config = ProjectConfig(
                 name=project_name or project_path.name,
-                type="algorithm",
-                description=f"Deployment project for {project_name or project_path.name}"
+                type=project_type or "algorithm",
+                description=description or f"Deployment project for {project_name or project_path.name}"
             )
 
         # Create directory structure

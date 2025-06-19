@@ -31,14 +31,42 @@ python -m deploy_tool --version
 #### 1. Initialize a project
 
 ```bash
-# Create project structure
+# Interactive mode - will prompt for project details
 deploy-tool init
 
-# This creates:
-# - .deploy-tool.yaml (project configuration)
-# - deployment/ directory structure
-# - .gitignore with sensible defaults
+# Initialize with project name
+deploy-tool init --name "My Algorithm Project"
+# or use short option
+deploy-tool init -n "My Algorithm Project"
+
+# Initialize with all options (skip interactive mode)
+deploy-tool init -n "My Project" -t algorithm -d "My awesome ML algorithm"
+
+# Initialize in a new directory
+deploy-tool init ./my-new-project
+
+# Force initialization in non-empty directory
+deploy-tool init --force
+# or
+deploy-tool init -f
+
+# Skip git initialization
+deploy-tool init --no-git
 ```
+
+**Available options for `init` command:**
+- `-n, --name`: Project name
+- `-t, --type`: Project type (choices: `algorithm`, `model`, `service`, `general`, default: `algorithm`)
+- `-d, --description`: Project description
+- `-f, --force`: Force initialization even if directory is not empty
+- `--no-git`: Skip git repository initialization
+
+The initialization process creates:
+- `.deploy-tool.yaml` - Project configuration file
+- `deployment/` - Directory structure for deployment artifacts
+- `.gitignore` - Git ignore rules with sensible defaults
+- `src/` - Source code directory
+- `dist/` - Output directory for packaged components
 
 #### 2. Package components
 

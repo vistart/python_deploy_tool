@@ -16,14 +16,14 @@ console = Console()
 
 @click.command()
 @click.argument('project_path', type=click.Path(), default='.')
-@click.option('--name', help='Project name')
-@click.option('--type', 'project_type',
+@click.option('-n', '--name', help='Project name')
+@click.option('-t', '--type', 'project_type',
               type=click.Choice(['algorithm', 'model', 'service', 'general']),
               default='algorithm',
-              help='Project type')
-@click.option('--description', help='Project description')
+              help='Project type (default: algorithm)')
+@click.option('-d', '--description', help='Project description')
 @click.option('--no-git', is_flag=True, help='Skip git initialization')
-@click.option('--force', is_flag=True, help='Force initialization even if directory is not empty')
+@click.option('-f', '--force', is_flag=True, help='Force initialization even if directory is not empty')
 @click.pass_context
 @ensure_no_project
 def init(ctx, project_path, name, project_type, description, no_git, force):
@@ -34,14 +34,20 @@ def init(ctx, project_path, name, project_type, description, no_git, force):
 
     Examples:
 
-        # Initialize in current directory
+        # Initialize in current directory (interactive mode)
         deploy-tool init
 
         # Initialize with specific name
         deploy-tool init --name my-algo
 
+        # Initialize with all options (skip interactive mode)
+        deploy-tool init -n "My Project" -t algorithm -d "My algorithm project"
+
         # Initialize in a new directory
         deploy-tool init ./my-new-project
+
+        # Force initialization in non-empty directory
+        deploy-tool init -f
     """
     project_path = Path(project_path).resolve()
 
@@ -73,9 +79,19 @@ def init(ctx, project_path, name, project_type, description, no_git, force):
         # Git initialization
         if not no_git and project_path.joinpath('.git').exists() is False:
             if Confirm.ask("\n[cyan]Initialize git repository?[/cyan]", default=True):
-                from ...utils.git_utils import init_git_repo
-                init_git_repo(project_path)
-                console.print("[green]✓[/green] Git repository initialized")
+                try:
+                    from ...utils.git_utils import init_git_repo
+                    if init_git_repo(project_path):
+                        console.print("[green]✓[/green] Git repository initialized")
+                    else:
+                        console.print("[yellow]⚠[/yellow] Failed to initialize Git repository")
+                        console.print("[dim]You can manually run 'git init' later[/dim]")
+                except ImportError:
+                    console.print("[yellow]⚠[/yellow] Git utilities not available")
+                    console.print("[dim]You can manually run 'git init' later[/dim]")
+                except Exception as e:
+                    console.print(f"[yellow]⚠[/yellow] Git initialization failed: {e}")
+                    console.print("[dim]You can manually run 'git init' later[/dim]")
 
         # Success message
         console.print(f"\n[green]✓[/green] Project initialized successfully at {project_path}")

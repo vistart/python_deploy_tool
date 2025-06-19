@@ -432,3 +432,36 @@ def add_files(path: Path, files: List[str]) -> bool:
         return result.returncode == 0
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
+
+
+def init_git_repo(path: Path) -> bool:
+    """
+    Initialize a Git repository
+
+    Args:
+        path: Directory path to initialize as git repository
+
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        # Initialize git repository
+        result = subprocess.run(
+            ['git', 'init'],
+            cwd=path,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+
+        # Set initial branch name to 'main' (modern convention)
+        subprocess.run(
+            ['git', 'branch', '-M', 'main'],
+            cwd=path,
+            capture_output=True,
+            text=True
+        )
+
+        return result.returncode == 0
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False

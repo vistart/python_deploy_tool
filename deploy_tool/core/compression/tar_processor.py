@@ -79,14 +79,16 @@ class TarProcessor:
     async def pack_with_manifest(self,
                                  source_paths: List[Path],
                                  output_path: Path,
-                                 metadata: Optional[Dict[str, Any]] = None) -> Tuple[Path, Optional[Manifest]]:
+                                 metadata: Optional[Dict[str, Any]] = None,
+                                 use_relative_paths: bool = True) -> Tuple[Path, Optional[Manifest]]:
         """
-        Pack files and generate manifest
+        Pack files and generate manifest with relative path support
 
         Args:
             source_paths: List of source paths to pack
             output_path: Output archive path
             metadata: Additional metadata for manifest
+            use_relative_paths: Whether to use relative paths in the archive (default: True)
 
         Returns:
             Tuple of (archive_path, manifest)
@@ -94,10 +96,11 @@ class TarProcessor:
         # Ensure output directory exists
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Pack files
+        # Pack files with relative path support
         success = await self._processor.compress_with_progress(
             source_paths,
-            output_path
+            output_path,
+            use_relative_paths=use_relative_paths
         )
 
         if not success:
@@ -116,15 +119,33 @@ class TarProcessor:
             for source_path in source_paths:
                 if source_path.is_file():
                     entry = FileEntry(
-                        path=str(source_path.name),
+                        path=str(source_path.name),  # Use relative path in manifest
                         size=source_path.stat().st_size,
-                        checksum=None,  # Would calculate in full implementation
-                        is_dir=False
+                        checksum="",  # Would calculate in full implementation
+                        # is_binary=True
+                    )
+                    file_entries.append(entry)
+                else:
+                    # For directories, would enumerate all files
+                    # This is a simplified version
+                    entry = FileEntry(
+                        path=str(source_path.name),
+                        size=stats.total_size,
+                        checksum="",
+                        # is_binary=True
                     )
                     file_entries.append(entry)
 
-            # Create manifest (if we have the engine)
-            # This would be properly integrated with the manifest engine
+            # Create manifest
+            manifest = self.manifest_engine.create_manifest(
+                package_type="",  # Would be set by caller
+                package_name="",  # Would be set by caller
+                version="",  # Would be set by caller
+                source_path=source_paths[0] if source_paths else None,
+                archive_path=output_path,
+                metadata=metadata,
+                # files=file_entries
+            )
 
         return output_path, manifest
 
@@ -203,6 +224,7 @@ class TarProcessor:
         processor = _AsyncTarProcessor()
         return processor._detect_compression_type(file_path)
 
+    # Static methods
     @staticmethod
     def get_file_extension(compression_type: CompressionType) -> str:
         """
@@ -212,16 +234,19 @@ class TarProcessor:
             compression_type: Compression type
 
         Returns:
-            File extension (including dot)
+            File extension (e.g., '.gz', '.bz2')
         """
-        extensions = {
-            CompressionType.GZIP: ".gz",
-            CompressionType.BZIP2: ".bz2",
-            CompressionType.XZ: ".xz",
-            CompressionType.LZ4: ".lz4",
-            CompressionType.NONE: ""
-        }
-        return extensions.get(compression_type, "")
+        return f".{compression_type.value}" if compression_type.value else ""
+
+    @property
+    def stats(self) -> Optional[OperationStats]:
+        """
+        Get operation statistics
+
+        Returns:
+            Operation statistics or None
+        """
+        return self._processor.stats if self._processor else None
 
     def get_stats(self) -> Optional[OperationStats]:
         """Get operation statistics"""
@@ -261,14 +286,16 @@ class TarProcessor:
     async def pack_directory(self,
                              directory: Path,
                              output_file: Path,
-                             exclude_patterns: Optional[List[str]] = None) -> bool:
+                             exclude_patterns: Optional[List[str]] = None,
+                             use_relative_paths: bool = True) -> bool:
         """
-        Pack a directory (convenience method)
+        Pack a directory with relative path support (convenience method)
 
         Args:
             directory: Directory to pack
             output_file: Output file path
             exclude_patterns: Patterns to exclude
+            use_relative_paths: Whether to use relative paths in the archive
 
         Returns:
             True if successful
@@ -278,17 +305,24 @@ class TarProcessor:
 
         # Note: Exclude patterns would need to be implemented
         # For now, pack everything
-        return await self._processor.compress_with_progress([directory], output_file)
+        return await self._processor.compress_with_progress(
+            [directory],
+            output_file,
+            use_relative_paths=use_relative_paths
+        )
+
 
     async def pack_files(self,
                          files: List[Path],
-                         output_file: Path) -> bool:
+                         output_file: Path,
+                         use_relative_paths: bool = True) -> bool:
         """
-        Pack multiple files (convenience method)
+        Pack multiple files with relative path support (convenience method)
 
         Args:
             files: List of files to pack
             output_file: Output file path
+            use_relative_paths: Whether to use relative paths in the archive
 
         Returns:
             True if successful
@@ -298,7 +332,11 @@ class TarProcessor:
             if not file_path.exists():
                 raise FileNotFoundError(f"File not found: {file_path}")
 
-        return await self._processor.compress_with_progress(files, output_file)
+        return await self._processor.compress_with_progress(
+            files,
+            output_file,
+            use_relative_paths=use_relative_paths
+        )
 
     def format_size(self, size: int) -> str:
         """Format size in human-readable format"""

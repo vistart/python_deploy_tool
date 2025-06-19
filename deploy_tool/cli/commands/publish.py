@@ -12,6 +12,7 @@ from ..utils.output import format_publish_result
 from ...api import Publisher
 from ...api.exceptions import PublishError, ComponentNotFoundError
 from ...models import Component
+from ...utils.async_utils import run_async
 
 console = Console()
 
@@ -37,8 +38,8 @@ def parse_component_spec(spec: str) -> tuple[str, str]:
 @click.pass_context
 @require_project
 @dual_mode_command
-async def publish(ctx, component, release_version, release_name, config,
-                  force, atomic, dry_run, no_confirm):
+def publish(ctx, component, release_version, release_name, config,
+            force, atomic, dry_run, no_confirm):
     """Publish components to storage backend
 
     Publishes one or more packaged components to the configured storage backend
@@ -49,88 +50,76 @@ async def publish(ctx, component, release_version, release_name, config,
         # Publish single component
         deploy-tool publish --component model:1.0.1
 
-        # Publish multiple components as a release
+        # Publish multiple components as release
         deploy-tool publish \\
             --component model:1.0.1 \\
             --component config:1.0.0 \\
-            --component python-runtime:3.10.12 \\
             --release-version 2024.01.20
 
-        # With release name
+        # Publish with custom name
         deploy-tool publish \\
             --component model:1.0.1 \\
-            --release-name "January Production Release"
+            --release-version 2024.01.20 \\
+            --release-name "January Release"
     """
     try:
         # Parse components
-        components_to_publish = []
-        for comp_spec in component:
-            comp_type, comp_version = parse_component_spec(comp_spec)
-            components_to_publish.append(Component(
+        components = []
+        for spec in component:
+            comp_type, comp_version = parse_component_spec(spec)
+            components.append(Component(
                 type=comp_type,
                 version=comp_version
             ))
 
-        # Show what will be published
+        # Show confirmation
         if not no_confirm and not dry_run:
-            table = Table(title="Components to Publish")
+            table = Table(title="Components to Publish", box=None)
             table.add_column("Type", style="cyan")
             table.add_column("Version", style="green")
 
-            for comp in components_to_publish:
+            for comp in components:
                 table.add_row(comp.type, comp.version)
 
             console.print(table)
 
             if release_version:
-                console.print(f"Release Version: [bold]{release_version}[/bold]")
+                console.print(f"\nRelease Version: [bold]{release_version}[/bold]")
             if release_name:
-                console.print(f"Release Name: [italic]{release_name}[/italic]")
+                console.print(f"Release Name: [dim]{release_name}[/dim]")
 
-            if not Confirm.ask("\n[cyan]Proceed with publish?[/cyan]", default=True):
-                console.print("[yellow]Publish cancelled[/yellow]")
+            if not Confirm.ask("\n[cyan]Proceed with publishing?[/cyan]"):
+                console.print("[yellow]Publishing cancelled[/yellow]")
                 sys.exit(0)
 
+        # Dry run mode
+        if dry_run:
+            console.print("[yellow]Dry run mode - no actual publishing[/yellow]")
+            return
+
         # Create publisher
-        publisher = Publisher(
-            path_resolver=ctx.obj.path_resolver,
-            storage_config=config
-        )
+        publisher = Publisher()
 
-        # Publish with progress
-        with console.status("[bold green]Publishing components...") as status:
-            result = await publisher.publish(
-                components=components_to_publish,
-                release_version=release_version,
-                release_name=release_name,
-                force=force,
-                atomic=atomic,
-                dry_run=dry_run
-            )
+        # Publish components
+        result = run_async(publisher.publish_async(
+            components=components,
+            release_version=release_version,
+            release_name=release_name,
+            force=force,
+            atomic=atomic
+        ))
 
-        # Display results
+        # Display result
         format_publish_result(result)
 
-        # Git advice for release manifest
-        if result.release_manifest_path and not dry_run:
-            from ..utils.output import show_git_advice
-            show_git_advice(result.release_manifest_path)
-
-    except ComponentNotFoundError as e:
-        console.print(f"[red]Component not found: {e}[/red]")
-        console.print("\n[yellow]Hint:[/yellow] Use 'deploy-tool component list' to see available components")
-        sys.exit(1)
-    except PublishError as e:
-        console.print(f"[red]Publish error: {e}[/red]")
-        sys.exit(1)
     except ValueError as e:
-        console.print(f"[red]Invalid input: {e}[/red]")
+        console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Publish cancelled by user[/yellow]")
-        sys.exit(130)
+    except (PublishError, ComponentNotFoundError) as e:
+        console.print(f"[red]Publishing error:[/red] {e}")
+        sys.exit(1)
     except Exception as e:
-        console.print(f"[red]Unexpected error: {e}[/red]")
+        console.print(f"[red]Unexpected error:[/red] {e}")
         if ctx.obj.debug:
             console.print_exception()
         sys.exit(1)

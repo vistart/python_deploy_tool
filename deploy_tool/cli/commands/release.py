@@ -1,6 +1,7 @@
-"""Release management command"""
+"""Release management commands"""
 
 import sys
+from datetime import datetime
 
 import click
 from rich import box
@@ -12,84 +13,94 @@ from rich.tree import Tree
 from ..decorators import require_project
 from ...api import query
 from ...api.exceptions import ReleaseNotFoundError
+from ...utils.async_utils import run_async
 
 console = Console()
 
 
 @click.group()
-@click.pass_context
-def release(ctx):
-    """Manage and query releases
+def release():
+    """Manage release versions
 
-    This command group provides functionality to list, inspect, and manage
+    This command group provides tools to list, show, and manage
     release versions that contain multiple components.
     """
     pass
 
 
-@release.command(name='list')
-@click.option('--limit', type=int, default=20, help='Limit number of results')
-@click.option('--from-date', type=click.DateTime(), help='Filter releases from date')
-@click.option('--to-date', type=click.DateTime(), help='Filter releases to date')
-@click.option('--contains', help='Filter releases containing component (type:version)')
+@release.command()
+@click.option('--limit', type=int, default=10, help='Number of releases to show')
+@click.option('--from', 'from_date', type=click.DateTime(), help='Start date')
+@click.option('--to', 'to_date', type=click.DateTime(), help='End date')
+@click.option('--output', type=click.Choice(['table', 'json', 'brief']),
+              default='table', help='Output format')
 @click.pass_context
 @require_project
-async def list_releases(ctx, limit, from_date, to_date, contains):
-    """List available releases
+def list(ctx, limit, from_date, to_date, output):
+    """List release versions
+
+    Shows available release versions with their metadata.
 
     Examples:
-        # List all releases
+
+        # List recent releases
         deploy-tool release list
 
-        # List releases from last month
-        deploy-tool release list --from-date 2024-01-01
+        # List releases in date range
+        deploy-tool release list --from 2024-01-01 --to 2024-01-31
 
-        # List releases containing specific component
-        deploy-tool release list --contains model:1.0.1
+        # Show more releases
+        deploy-tool release list --limit 50
     """
     try:
         # Query releases
-        releases = await query.list_releases(
+        releases = run_async(query.list_releases_async(
             limit=limit,
             from_date=from_date,
-            to_date=to_date,
-            contains_component=contains
-        )
+            to_date=to_date
+        ))
 
         if not releases:
             console.print("[yellow]No releases found[/yellow]")
             return
 
-        # Display in table
-        table = Table(title="Available Releases", box=box.ROUNDED)
-        table.add_column("Version", style="cyan", no_wrap=True)
-        table.add_column("Name", style="green")
-        table.add_column("Components", justify="center", style="yellow")
-        table.add_column("Created", style="dim")
-        table.add_column("Status", style="bold")
+        # Display based on format
+        if output == 'json':
+            import json
+            output_data = [
+                {
+                    'version': r.version,
+                    'name': r.name,
+                    'created_at': r.created_at.isoformat(),
+                    'component_count': len(r.components)
+                }
+                for r in releases
+            ]
+            console.print_json(data=output_data)
 
-        for rel in releases:
-            status = "[green]✓[/green]" if rel.verified else "[yellow]?[/yellow]"
-            name = rel.name or "-"
-            if len(name) > 30:
-                name = name[:27] + "..."
+        elif output == 'brief':
+            for rel in releases:
+                console.print(f"{rel.version} - {rel.created_at.strftime('%Y-%m-%d')}")
 
-            table.add_row(
-                rel.version,
-                name,
-                str(len(rel.components)),
-                rel.created_at.strftime("%Y-%m-%d %H:%M"),
-                status
-            )
+        else:  # table
+            table = Table(title=f"Release Versions (Latest {limit})", box=box.SIMPLE)
+            table.add_column("Version", style="cyan", no_wrap=True)
+            table.add_column("Name", style="white")
+            table.add_column("Components", justify="center", style="green")
+            table.add_column("Created", style="yellow")
 
-        console.print(table)
+            for rel in releases:
+                table.add_row(
+                    rel.version,
+                    rel.name or "-",
+                    str(len(rel.components)),
+                    rel.created_at.strftime("%Y-%m-%d %H:%M")
+                )
 
-        # Show summary
-        if len(releases) == limit:
-            console.print(f"\n[dim]Showing latest {limit} releases. Use --limit to see more.[/dim]")
+            console.print(table)
 
     except Exception as e:
-        console.print(f"[red]Error listing releases: {e}[/red]")
+        console.print(f"[red]Error: {e}[/red]")
         if ctx.obj.debug:
             console.print_exception()
         sys.exit(1)
@@ -97,49 +108,46 @@ async def list_releases(ctx, limit, from_date, to_date, contains):
 
 @release.command()
 @click.argument('release_version', required=True)
-@click.option('--format', 'output_format',
-              type=click.Choice(['table', 'tree', 'json']),
-              default='table',
-              help='Output format')
+@click.option('--output', type=click.Choice(['table', 'tree', 'json']),
+              default='table', help='Output format')
 @click.pass_context
 @require_project
-async def show(ctx, release_version, output_format):
-    """Show detailed information about a release
+def show(ctx, release_version, output):
+    """Show release details
+
+    Display detailed information about a specific release version,
+    including all components it contains.
 
     Arguments:
         RELEASE_VERSION: Release version to show
 
     Examples:
+
         # Show release details
         deploy-tool release show 2024.01.20
 
-        # Show as tree structure
-        deploy-tool release show 2024.01.20 --format tree
+        # Show as tree view
+        deploy-tool release show 2024.01.20 --output tree
+
+        # Get JSON output
+        deploy-tool release show 2024.01.20 --output json
     """
     try:
         # Get release details
-        rel = await query.get_release(release_version)
+        rel = run_async(query.get_release_async(release_version))
 
-        if not rel:
-            raise ReleaseNotFoundError(f"Release {release_version} not found")
-
-        # Display header info
-        header_lines = []
-        header_lines.append(f"[bold]Version:[/bold] {rel.version}")
-        if rel.name:
-            header_lines.append(f"[bold]Name:[/bold] {rel.name}")
-        header_lines.append(f"[bold]Created:[/bold] {rel.created_at}")
-        header_lines.append(f"[bold]Components:[/bold] {len(rel.components)}")
-
+        # Display header
         panel = Panel(
-            "\n".join(header_lines),
+            f"[bold]{rel.name or 'Unnamed Release'}[/bold]\n"
+            f"Created: {rel.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"Components: {len(rel.components)}",
             title=f"Release: {release_version}",
             border_style="cyan"
         )
         console.print(panel)
 
         # Display components based on format
-        if output_format == 'tree':
+        if output == 'tree':
             # Tree view
             tree = Tree("Components")
             for comp in rel.components:
@@ -150,10 +158,10 @@ async def show(ctx, release_version, output_format):
                     node.add(f"SHA256: {comp.checksum[:16]}...")
             console.print(tree)
 
-        elif output_format == 'json':
+        elif output == 'json':
             # JSON output
             import json
-            output = {
+            output_data = {
                 'version': rel.version,
                 'name': rel.name,
                 'created_at': rel.created_at.isoformat(),
@@ -167,7 +175,7 @@ async def show(ctx, release_version, output_format):
                     for c in rel.components
                 ]
             }
-            console.print_json(data=output)
+            console.print_json(data=output_data)
 
         else:
             # Table view (default)
@@ -210,7 +218,7 @@ async def show(ctx, release_version, output_format):
 @click.option('--version', help='Release version (auto-generated if not provided)')
 @click.option('--name', help='Release name/description')
 @click.pass_context
-async def create(ctx, component, version, name):
+def create(ctx, component, version, name):
     """Create a new release (alias for publish)
 
     This is an alias for 'deploy-tool publish' command.
@@ -239,7 +247,7 @@ async def create(ctx, component, version, name):
 @click.argument('release_version', required=True)
 @click.pass_context
 @require_project
-async def verify(ctx, release_version):
+def verify(ctx, release_version):
     """Verify release integrity
 
     Arguments:
@@ -253,7 +261,7 @@ async def verify(ctx, release_version):
         console.print(f"Verifying release {release_version}...")
 
         # Run verification
-        result = await query.verify_release(release_version)
+        result = run_async(query.verify_release_async(release_version))
 
         # Display overall result
         if result.is_valid:

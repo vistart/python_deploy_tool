@@ -10,6 +10,7 @@ from rich.table import Table
 
 from ..decorators import require_project
 from ...utils.git_utils import check_git_status
+from ...utils.async_utils import run_async
 
 console = Console()
 
@@ -24,11 +25,11 @@ class DiagnosticCheck:
         self.message = ""
         self.fixes = []
 
-    async def run(self, ctx) -> 'DiagnosticCheck':
+    def run(self, ctx) -> 'DiagnosticCheck':
         """Run the diagnostic check"""
         raise NotImplementedError
 
-    async def fix(self, ctx) -> bool:
+    def fix(self, ctx) -> bool:
         """Attempt to fix the issue"""
         return False
 
@@ -42,7 +43,7 @@ class ProjectStructureCheck(DiagnosticCheck):
             "Verify standard directory structure exists"
         )
 
-    async def run(self, ctx):
+    def run(self, ctx):
         required_dirs = [
             "deployment/package-configs",
             "deployment/manifests",
@@ -66,7 +67,7 @@ class ProjectStructureCheck(DiagnosticCheck):
 
         return self
 
-    async def fix(self, ctx):
+    def fix(self, ctx):
         required_dirs = [
             "deployment/package-configs",
             "deployment/manifests",
@@ -90,7 +91,7 @@ class GitStatusCheck(DiagnosticCheck):
             "Check Git repository health"
         )
 
-    async def run(self, ctx):
+    def run(self, ctx):
         git_status = check_git_status(ctx.obj.project_root)
 
         if not git_status['is_git_repo']:
@@ -106,7 +107,7 @@ class GitStatusCheck(DiagnosticCheck):
 
         return self
 
-    async def fix(self, ctx):
+    def fix(self, ctx):
         if not (ctx.obj.project_root / '.git').exists():
             from ...utils.git_utils import init_git_repo
             init_git_repo(ctx.obj.project_root)
@@ -123,7 +124,7 @@ class StorageAccessCheck(DiagnosticCheck):
             "Verify storage backend connectivity"
         )
 
-    async def run(self, ctx):
+    def run(self, ctx):
         # Check for storage configuration
         storage_type = os.environ.get('DEPLOY_TOOL_STORAGE', 'filesystem')
 
@@ -156,7 +157,7 @@ class PermissionsCheck(DiagnosticCheck):
             "Verify read/write permissions"
         )
 
-    async def run(self, ctx):
+    def run(self, ctx):
         test_paths = [
             ctx.obj.project_root / "deployment",
             ctx.obj.project_root / "dist"
@@ -191,26 +192,26 @@ class PermissionsCheck(DiagnosticCheck):
               help='Specific checks to run')
 @click.pass_context
 @require_project
-async def doctor(ctx, fix, check):
+def doctor(ctx, fix, check):
     """Run system diagnostics
 
     This command checks the health of your deployment project and can
     automatically fix common issues.
 
     Examples:
+
         # Run all checks
         deploy-tool doctor
 
         # Run specific checks
-        deploy-tool doctor --check git --check permissions
+        deploy-tool doctor --check structure --check git
 
-        # Auto-fix issues
+        # Attempt automatic fixes
         deploy-tool doctor --fix
     """
-    console.print("[bold cyan]Deploy Tool Doctor[/bold cyan]")
-    console.print(f"Project: {ctx.obj.project_root}\n")
+    console.print("[bold]Deploy Tool Diagnostics[/bold]\n")
 
-    # Initialize checks
+    # Determine which checks to run
     all_checks = {
         'structure': ProjectStructureCheck(),
         'git': GitStatusCheck(),
@@ -218,64 +219,50 @@ async def doctor(ctx, fix, check):
         'permissions': PermissionsCheck()
     }
 
-    # Determine which checks to run
     if 'all' in check:
         checks_to_run = list(all_checks.values())
     else:
         checks_to_run = [all_checks[c] for c in check if c in all_checks]
 
     # Run checks
-    results = []
+    failed_checks = []
     for diagnostic_check in checks_to_run:
-        with console.status(f"Checking {diagnostic_check.name}..."):
-            result = await diagnostic_check.run(ctx)
-            results.append(result)
+        diagnostic_check.run(ctx)
+        if not diagnostic_check.passed:
+            failed_checks.append(diagnostic_check)
 
     # Display results
     table = Table(title="Diagnostic Results", box=box.ROUNDED)
     table.add_column("Check", style="cyan")
     table.add_column("Status", justify="center")
-    table.add_column("Details", style="dim")
+    table.add_column("Details")
 
-    issues_found = False
-    fixable_issues = []
-
-    for result in results:
-        status = "[green]✓ PASS[/green]" if result.passed else "[red]✗ FAIL[/red]"
-        table.add_row(result.name, status, result.message)
-
-        if not result.passed:
-            issues_found = True
-            if result.fixes:
-                fixable_issues.append(result)
+    for diagnostic_check in checks_to_run:
+        status = "[green]✓ PASS[/green]" if diagnostic_check.passed else "[red]✗ FAIL[/red]"
+        table.add_row(
+            diagnostic_check.name,
+            status,
+            diagnostic_check.message
+        )
 
     console.print(table)
 
-    # Handle fixes
-    if fixable_issues and fix:
-        console.print("\n[yellow]Attempting to fix issues...[/yellow]")
+    # Attempt fixes if requested
+    if fix and failed_checks:
+        console.print("\n[yellow]Attempting automatic fixes...[/yellow]\n")
 
-        for issue in fixable_issues:
-            console.print(f"\nFixing: {issue.name}")
-            for fix_desc in issue.fixes:
-                console.print(f"  • {fix_desc}")
-
-            try:
-                success = await issue.fix(ctx)
-                if success:
-                    console.print(f"  [green]✓ Fixed[/green]")
+        for diagnostic_check in failed_checks:
+            if diagnostic_check.fixes:
+                console.print(f"Fixing: {diagnostic_check.name}")
+                if diagnostic_check.fix(ctx):
+                    console.print(f"[green]✓[/green] Fixed: {diagnostic_check.name}")
                 else:
-                    console.print(f"  [red]✗ Could not fix automatically[/red]")
-            except Exception as e:
-                console.print(f"  [red]✗ Error: {e}[/red]")
+                    console.print(f"[red]✗[/red] Could not fix: {diagnostic_check.name}")
 
-    elif fixable_issues and not fix:
-        console.print("\n[yellow]Issues found that can be fixed automatically.[/yellow]")
-        console.print("Run 'deploy-tool doctor --fix' to attempt fixes.")
-
-    # Summary
-    if not issues_found:
-        console.print("\n[green]✓ All checks passed! Your project is healthy.[/green]")
-    else:
-        console.print("\n[red]✗ Some issues were found. Please review the results above.[/red]")
+    # Exit code based on results
+    if failed_checks and not fix:
+        console.print(f"\n[red]{len(failed_checks)} check(s) failed[/red]")
+        console.print("Run with --fix to attempt automatic fixes")
         sys.exit(1)
+    else:
+        console.print("\n[green]All checks passed![/green]")

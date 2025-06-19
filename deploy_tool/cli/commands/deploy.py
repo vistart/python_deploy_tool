@@ -11,6 +11,7 @@ from ..decorators import require_project, dual_mode_command
 from ..utils.output import format_deploy_result
 from ...api import Deployer
 from ...api.exceptions import DeployError, ReleaseNotFoundError, ComponentNotFoundError
+from ...utils.async_utils import run_async
 
 console = Console()
 
@@ -29,8 +30,8 @@ console = Console()
 @click.pass_context
 @require_project
 @dual_mode_command
-async def deploy(ctx, release, component, target, env, verify, rollback,
-                 force, dry_run, no_confirm):
+def deploy(ctx, release, component, target, env, verify, rollback,
+           force, dry_run, no_confirm):
     """Deploy components to target environment
 
     Deploy packaged components or complete releases to local directories
@@ -38,119 +39,92 @@ async def deploy(ctx, release, component, target, env, verify, rollback,
 
     Examples:
 
-        # Deploy a complete release
+        # Deploy release version
         deploy-tool deploy --release 2024.01.20 --target production
 
         # Deploy to local directory
-        deploy-tool deploy --release 2024.01.20 --target ~/deployments/algo_a/
+        deploy-tool deploy --release 2024.01.20 --target ~/deployments/
 
         # Deploy single component
-        deploy-tool deploy --component model:1.0.1 --target ~/models/
+        deploy-tool deploy --component model:1.0.1 --target dev-server
 
-        # Deploy with environment specification
-        deploy-tool deploy --release 2024.01.20 --target server-01 --env production
+        # Deploy with rollback enabled
+        deploy-tool deploy --release 2024.01.20 --target production --rollback
     """
-    # Validate inputs
-    if not release and not component:
-        console.print("[red]Error: Either --release or --component must be specified[/red]")
-        sys.exit(1)
-
-    if release and component:
-        console.print("[red]Error: Cannot specify both --release and --component[/red]")
-        sys.exit(1)
-
     try:
-        # Create deployer
-        deployer = Deployer(
-            path_resolver=ctx.obj.path_resolver,
-            environment=env
-        )
+        # Validate arguments
+        if not release and not component:
+            console.print("[red]Error: Must specify --release or --component[/red]")
+            sys.exit(1)
 
-        # Determine what to deploy
-        if release:
-            deploy_items = await deployer.get_release_components(release)
-            deploy_type = f"Release {release}"
-        else:
-            comp_type, comp_version = component.split(':', 1)
-            deploy_items = [(comp_type, comp_version)]
-            deploy_type = f"Component {component}"
+        if release and component:
+            console.print("[red]Error: Cannot specify both --release and --component[/red]")
+            sys.exit(1)
 
-        # Show deployment plan
+        # Show confirmation
         if not no_confirm and not dry_run:
-            table = Table(title=f"Deployment Plan: {deploy_type}")
-            table.add_column("Component", style="cyan")
-            table.add_column("Version", style="green")
-            table.add_column("Target", style="yellow")
+            if release:
+                console.print(f"Deploy release: [bold]{release}[/bold]")
+            else:
+                console.print(f"Deploy component: [bold]{component}[/bold]")
 
-            for item in deploy_items:
-                if isinstance(item, tuple):
-                    table.add_row(item[0], item[1], target)
-                else:
-                    table.add_row(item.type, item.version, target)
-
-            console.print(table)
-
+            console.print(f"Target: [cyan]{target}[/cyan]")
             if env:
-                console.print(f"Environment: [bold]{env}[/bold]")
+                console.print(f"Environment: [yellow]{env}[/yellow]")
 
-            if not Confirm.ask("\n[cyan]Proceed with deployment?[/cyan]", default=True):
+            options = []
+            if verify:
+                options.append("verify")
+            if rollback:
+                options.append("rollback on failure")
+            if force:
+                options.append("force")
+
+            if options:
+                console.print(f"Options: {', '.join(options)}")
+
+            if not Confirm.ask("\n[cyan]Proceed with deployment?[/cyan]"):
                 console.print("[yellow]Deployment cancelled[/yellow]")
                 sys.exit(0)
 
-        # Execute deployment
-        with console.status(f"[bold green]Deploying {deploy_type}...") as status:
-            if release:
-                result = await deployer.deploy_release(
-                    release_version=release,
-                    target=target,
-                    verify=verify,
-                    rollback_enabled=rollback,
-                    force=force,
-                    dry_run=dry_run
-                )
-            else:
-                result = await deployer.deploy_component(
-                    component_type=comp_type,
-                    component_version=comp_version,
-                    target=target,
-                    verify=verify,
-                    rollback_enabled=rollback,
-                    force=force,
-                    dry_run=dry_run
-                )
+        # Dry run mode
+        if dry_run:
+            console.print("[yellow]Dry run mode - no actual deployment[/yellow]")
+            return
 
-        # Display results
+        # Create deployer
+        target_config = {}
+        if env:
+            target_config['environment'] = env
+
+        deployer = Deployer(target_config=target_config)
+
+        # Execute deployment
+        if release:
+            result = run_async(deployer.deploy_release_async(
+                release_version=release,
+                target=target,
+                verify=verify,
+                rollback_on_failure=rollback
+            ))
+        else:
+            # Parse component spec
+            comp_type, comp_version = component.split(':', 1)
+            result = run_async(deployer.deploy_component_async(
+                component_type=comp_type,
+                component_version=comp_version,
+                target=target,
+                verify=verify
+            ))
+
+        # Display result
         format_deploy_result(result)
 
-        # Show post-deployment advice
-        if result.success and not dry_run:
-            console.print("\n[green]✓ Deployment completed successfully[/green]")
-
-            if result.verification_results:
-                console.print("\nVerification Results:")
-                for check, status in result.verification_results.items():
-                    icon = "✓" if status else "✗"
-                    color = "green" if status else "red"
-                    console.print(f"  [{color}]{icon}[/{color}] {check}")
-
-    except ReleaseNotFoundError as e:
-        console.print(f"[red]Release not found: {e}[/red]")
-        console.print("\n[yellow]Hint:[/yellow] Use 'deploy-tool release list' to see available releases")
+    except (DeployError, ReleaseNotFoundError, ComponentNotFoundError) as e:
+        console.print(f"[red]Deployment error:[/red] {e}")
         sys.exit(1)
-    except ComponentNotFoundError as e:
-        console.print(f"[red]Component not found: {e}[/red]")
-        console.print("\n[yellow]Hint:[/yellow] Use 'deploy-tool component list' to see available components")
-        sys.exit(1)
-    except DeployError as e:
-        console.print(f"[red]Deploy error: {e}[/red]")
-        if rollback and hasattr(e, 'rollback_performed') and e.rollback_performed:
-            console.print("[yellow]Rollback was performed[/yellow]")
-        sys.exit(1)
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Deployment cancelled by user[/yellow]")
-        sys.exit(130)
     except Exception as e:
-        console.print(f"[red]Unexpected error: {e}[/red]")
+        console.print(f"[red]Unexpected error:[/red] {e}")
         if ctx.obj.debug:
             console.print_exception()
         sys.exit(1)

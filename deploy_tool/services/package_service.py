@@ -3,6 +3,7 @@
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Any
+from dataclasses import dataclass, field
 
 from ..api.exceptions import (
     PackError,
@@ -17,8 +18,28 @@ from ..core import (
     GitAdvisor,
 )
 from ..core.compression import TarProcessor, CompressionType
-from ..models import PackResult
-from ..models.config import FullConfig
+from ..models import PackResult, PackageConfig, SourceConfig, CompressionConfig, OutputConfig
+
+
+@dataclass
+class FullConfig:
+    """Full package configuration combining all config components"""
+    package: PackageConfig
+    source: SourceConfig
+    compression: CompressionConfig = field(default_factory=CompressionConfig)
+    output: OutputConfig = field(default_factory=OutputConfig)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'FullConfig':
+        """Create from dictionary"""
+        return cls(
+            package=PackageConfig.from_dict(data['package']),
+            source=SourceConfig.from_dict(data['source']),
+            compression=CompressionConfig.from_dict(data.get('compression', {})),
+            output=OutputConfig.from_dict(data.get('output', {})),
+            metadata=data.get('metadata', {})
+        )
 
 
 class PackageService:
@@ -53,7 +74,7 @@ class PackageService:
         Execute packaging workflow
 
         Args:
-            source_path: Source path
+            source_path: Source path (should be relative)
             package_type: Package type
             version: Version string
             options: Additional options
@@ -68,36 +89,39 @@ class PackageService:
             # 1. Validate inputs
             await self._validate_inputs(source_path, package_type, version)
 
-            # 2. Resolve paths
+            # 2. Convert to relative path if absolute
+            source_path = self._ensure_relative_path(source_path)
+
+            # 3. Resolve path for actual file operations
             source = self.path_resolver.resolve(source_path)
 
-            # 3. Generate or load configuration
+            # 4. Generate or load configuration
             if options.get('config_path'):
                 config = self._load_config(options['config_path'])
             else:
                 config = await self._generate_config(source, package_type, version, options)
 
-            # 4. Scan files
+            # 5. Scan files (record relative paths)
             files_info = await self._scan_files(source, config)
 
-            # 5. Execute compression
+            # 6. Execute compression
             archive_path = await self._compress_files(source, config, files_info, options)
 
-            # 6. Generate manifest
+            # 7. Generate manifest (with relative paths)
             manifest = self._create_manifest(
-                config, source, archive_path, files_info, options
+                config, source_path, archive_path, files_info, options
             )
 
-            # 7. Save manifest
+            # 8. Save manifest
             manifest_path = self.manifest_engine.save_manifest(manifest)
 
-            # 8. Create result
+            # 9. Create result (with relative paths for display)
             result = PackResult(
                 success=True,
                 package_type=package_type,
                 version=version,
-                manifest_path=str(manifest_path),
-                archive_path=str(archive_path),
+                manifest_path=str(self.path_resolver.get_relative_to_root(manifest_path)),
+                archive_path=str(self.path_resolver.get_relative_to_root(archive_path)),
                 duration=time.time() - start_time,
                 metadata={
                     'file_count': len(files_info),
@@ -106,7 +130,7 @@ class PackageService:
                 }
             )
 
-            # 9. Provide Git suggestions
+            # 10. Provide Git suggestions
             if options.get('show_git_suggestions', True):
                 self.git_advisor.provide_post_pack_advice(
                     manifest_path,
@@ -124,6 +148,31 @@ class PackageService:
                 duration=time.time() - start_time
             )
 
+    def _ensure_relative_path(self, path: str) -> str:
+        """Ensure path is relative to project root
+
+        Args:
+            path: Input path (absolute or relative)
+
+        Returns:
+            Relative path string
+        """
+        path_obj = Path(path)
+
+        # If already relative, return as-is
+        if not path_obj.is_absolute():
+            return path
+
+        # Try to make relative to project root
+        try:
+            rel_path = path_obj.relative_to(self.path_resolver.project_root)
+            return str(rel_path)
+        except ValueError:
+            raise PackError(
+                f"Path '{path}' is outside project root. "
+                f"Please use paths within the project for portability."
+            )
+
     async def auto_pack(self,
                         source_path: str,
                         package_type: str,
@@ -139,6 +188,9 @@ class PackageService:
         Returns:
             PackResult: Packaging result
         """
+        # Ensure relative path
+        source_path = self._ensure_relative_path(source_path)
+
         # Generate configuration
         source = Path(source_path)
         config_dict, config_path = self.config_generator.generate_config(
@@ -156,7 +208,7 @@ class PackageService:
 
         # Add config path to result
         if config_path:
-            result.config_path = str(config_path)
+            result.config_path = str(self.path_resolver.get_relative_to_root(config_path))
 
         return result
 
@@ -246,20 +298,23 @@ class PackageService:
     async def _scan_files(self,
                           source: Path,
                           config: FullConfig) -> List[Dict[str, Any]]:
-        """Scan files to package"""
+        """Scan files to package (recording relative paths)"""
         from ..utils import scan_directory
 
         files = []
+        project_root = self.path_resolver.project_root
+
         if source.is_file():
-            # Single file
+            # Single file - record relative path from project root
+            rel_path = source.relative_to(project_root)
             files.append({
                 'path': source,
-                'rel_path': source.name,
+                'rel_path': str(rel_path),
                 'size': source.stat().st_size,
                 'is_binary': True,  # Assume binary for safety
             })
         else:
-            # Directory
+            # Directory - scan and record relative paths
             scan_results = scan_directory(
                 source,
                 excludes=config.source.excludes,
@@ -267,9 +322,11 @@ class PackageService:
             )
 
             for file_path, info in scan_results:
+                # Record relative path from source directory
+                rel_path = file_path.relative_to(source)
                 files.append({
                     'path': file_path,
-                    'rel_path': str(file_path.relative_to(source)),
+                    'rel_path': str(rel_path),
                     'size': info['size'],
                     'is_binary': info['is_binary'],
                 })
@@ -309,7 +366,7 @@ class PackageService:
         # Set compression level
         processor._processor.compression_level = config.compression.level
 
-        # Pack with progress
+        # Pack with progress - use relative paths in archive
         if source.is_file():
             sources = [source]
         else:
@@ -319,28 +376,35 @@ class PackageService:
         archive_path, _ = await processor.pack_with_manifest(
             sources,
             archive_path,
-            metadata=config.metadata
+            metadata=config.metadata,
+            # Ensure relative paths are used in the archive
+            use_relative_paths=True
         )
 
         return archive_path
 
     def _create_manifest(self,
                          config: FullConfig,
-                         source: Path,
+                         source_path: str,  # Already relative
                          archive_path: Path,
                          files_info: List[Dict[str, Any]],
                          options: Dict[str, Any]) -> Any:
-        """Create manifest"""
+        """Create manifest with relative paths"""
+        # Convert archive path to relative
+        archive_path_rel = self.path_resolver.get_relative_to_root(archive_path)
+
         manifest = self.manifest_engine.create_manifest(
             package_type=config.package.type,
             package_name=config.package.name or config.package.type,
             version=config.package.version,
-            source_path=source,
+            source_path=Path(source_path),  # Use the already relative path
             archive_path=archive_path,
             metadata={
                 **config.metadata,
                 'file_count': len(files_info),
                 'total_source_size': sum(f['size'] for f in files_info),
+                'source_path': source_path,  # Store original relative path
+                'archive_path': str(archive_path_rel),  # Store relative archive path
             }
         )
 

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 
 from .path_resolver import PathResolver
-from ..constants import MANIFEST_VERSION
+from ..constants import MANIFEST_VERSION, PROJECT_CONFIG_FILE
 from ..models.manifest import Manifest, ComponentManifest, FileEntry
 
 
@@ -39,6 +39,10 @@ class ManifestEngine:
         Returns:
             Manifest object
         """
+        # Convert paths to relative for portability
+        source_path_rel = self._to_relative_path(source_path)
+        archive_path_rel = self._to_relative_path(archive_path)
+
         # Calculate archive checksum
         archive_checksum = self._calculate_file_checksum(archive_path)
         archive_size = archive_path.stat().st_size
@@ -56,11 +60,11 @@ class ManifestEngine:
                 'name': package_name,
                 'version': version,
                 'created_at': datetime.now().isoformat(),
-                'source': self.path_resolver.get_relative_to_root(source_path)
+                'source': str(source_path_rel)  # Use relative path
             },
             archive={
                 'filename': archive_path.name,
-                'location': self.path_resolver.get_relative_to_root(archive_path),
+                'location': str(archive_path_rel),  # Use relative path
                 'size': archive_size,
                 'checksum': {
                     'sha256': archive_checksum
@@ -69,7 +73,7 @@ class ManifestEngine:
             build={
                 'host': self._get_hostname(),
                 'user': self._get_username(),
-                'cwd': self.path_resolver.get_relative_to_root(Path.cwd()),
+                'cwd': str(self._to_relative_path(Path.cwd())),  # Use relative path
                 'tool_version': self._get_tool_version()
             }
         )
@@ -79,6 +83,31 @@ class ManifestEngine:
             manifest.metadata = metadata
 
         return manifest
+
+    def _to_relative_path(self, path: Path) -> Path:
+        """Convert path to relative from project root
+
+        Args:
+            path: Path to convert
+
+        Returns:
+            Relative path from project root, or original if outside project
+        """
+        if not path.is_absolute():
+            return path
+
+        try:
+            # Try to make relative to project root
+            rel_path = path.relative_to(self.path_resolver.project_root)
+            return Path(".") / rel_path  # Ensure it starts with ./
+        except ValueError:
+            # Path is outside project root
+            import logging
+            logging.warning(
+                f"Path {path} is outside project root {self.path_resolver.project_root}. "
+                "This may affect portability."
+            )
+            return path
 
     def save_manifest(self, manifest: Manifest, output_path: Optional[Path] = None) -> Path:
         """
@@ -164,6 +193,13 @@ class ManifestEngine:
             if not field_value:
                 errors.append(f"Missing required field: {field_name}")
 
+        # Validate paths are relative (warning only)
+        if 'source' in manifest.package and Path(manifest.package['source']).is_absolute():
+            errors.append("Warning: Source path is absolute, which may affect portability")
+
+        if 'location' in manifest.archive and Path(manifest.archive['location']).is_absolute():
+            errors.append("Warning: Archive location is absolute, which may affect portability")
+
         # Validate archive if provided
         if archive_path and archive_path.exists():
             # Check size
@@ -222,6 +258,19 @@ class ManifestEngine:
         Returns:
             ComponentManifest object
         """
+        # Ensure file entries use relative paths
+        processed_files = []
+        for file_entry in files:
+            if hasattr(file_entry, 'path'):
+                file_path = Path(file_entry.path)
+                if file_path.is_absolute():
+                    try:
+                        rel_path = file_path.relative_to(self.path_resolver.project_root)
+                        file_entry.path = str(rel_path)
+                    except ValueError:
+                        pass  # Keep absolute path if outside project
+            processed_files.append(file_entry)
+
         manifest = ComponentManifest(
             manifest_version=MANIFEST_VERSION,
             component={
@@ -229,7 +278,7 @@ class ManifestEngine:
                 'version': version,
                 'created_at': datetime.now().isoformat()
             },
-            files=[f.to_dict() for f in files],
+            files=[f.to_dict() for f in processed_files],
             metadata=metadata or {}
         )
 
@@ -345,6 +394,3 @@ class ManifestEngine:
         manifests.sort(key=lambda x: (x[0], x[1]))
 
         return manifests
-
-
-from ..constants import PROJECT_CONFIG_FILE

@@ -1,6 +1,7 @@
 """Pack command implementation"""
 
 import sys
+from pathlib import Path
 
 import click
 from rich.console import Console
@@ -32,7 +33,7 @@ console = Console()
 @click.option('--batch', type=click.Path(exists=True), help='Batch pack config file')
 @click.pass_context
 @require_project
-@dual_mode_command  # Note: No parentheses - this is a decorator, not a function call
+@dual_mode_command
 def pack(ctx, source, package_type, version, auto, wizard, config, output,
          compress, level, force, save_config, dry_run, batch):
     """Pack files or directories into deployment packages
@@ -63,11 +64,25 @@ def pack(ctx, source, package_type, version, auto, wizard, config, output,
         # Create packer instance
         packer = Packer()
 
+        # Ensure we use relative paths
+        if source and Path(source).is_absolute():
+            # Convert absolute path to relative
+            project_root = ctx.obj.path_resolver.project_root
+            try:
+                rel_source = Path(source).relative_to(project_root)
+                source = str(rel_source)
+                console.print(f"[yellow]Converting to relative path: {source}[/yellow]")
+            except ValueError:
+                console.print(f"[red]Error: Source path '{source}' is outside project root[/red]")
+                console.print(f"[yellow]Project root: {project_root}[/yellow]")
+                console.print("[yellow]Please use a path within the project[/yellow]")
+                sys.exit(1)
+
         # Handle different modes
         if wizard:
-            # Interactive wizard mode
-            wizard = PackWizard(ctx.obj.path_resolver)
-            result = run_async(wizard.run())
+            # Interactive wizard mode - pass console, not path_resolver
+            wizard_obj = PackWizard(console)  # Fix: pass console instead of path_resolver
+            result = run_async(wizard_obj.run(initial_path=source))
             if not result:
                 console.print("[yellow]Wizard cancelled[/yellow]")
                 sys.exit(0)
@@ -179,6 +194,9 @@ def pack(ctx, source, package_type, version, auto, wizard, config, output,
         # Show git advice if needed
         if pack_result.manifest_path and not dry_run:
             show_git_advice(pack_result.manifest_path)
+
+        # Show portability reminder
+        console.print("\n[dim]💡 Tip: Always use relative paths for better portability across environments[/dim]")
 
     except (PackError, MissingTypeError, MissingVersionError) as e:
         console.print(f"[red]Pack error: {e}[/red]")

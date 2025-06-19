@@ -24,14 +24,16 @@ def format_pack_result(result: PackResult) -> None:
             f"[bold]Type:[/bold] {result.package_type}",
             f"[bold]Version:[/bold] {result.version}",
             f"[bold]Archive:[/bold] {result.archive_path}",
-            f"[bold]Size:[/bold] {_format_size(result.size)}",
         ]
+
+        if result.archive_size:
+            lines.append(f"[bold]Size:[/bold] {_format_size(result.archive_size)}")
 
         if result.manifest_path:
             lines.append(f"[bold]Manifest:[/bold] {result.manifest_path}")
 
-        if result.compression_ratio:
-            lines.append(f"[bold]Compression:[/bold] {result.compression_ratio:.1%}")
+        if result.metadata.get('compression_ratio'):
+            lines.append(f"[bold]Compression:[/bold] {result.metadata['compression_ratio']:.1%}")
 
         panel = Panel(
             "\n".join(lines),
@@ -39,6 +41,11 @@ def format_pack_result(result: PackResult) -> None:
             border_style="green"
         )
         console.print(panel)
+
+        if result.git_suggestions:
+            console.print("\n[bold yellow]Git Operation Suggestions:[/bold yellow]")
+            for suggestion in result.git_suggestions:
+                console.print(f"  • {suggestion}")
 
     else:
         # Error panel

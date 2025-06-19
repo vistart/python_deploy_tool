@@ -53,14 +53,14 @@ def paths(ctx, resolve, tree, validate, show_config):
         table.add_column("Absolute Path", style="green")
         table.add_column("Relative Path", style="yellow")
 
-        # Project paths
+        # Project paths - 注意：使用方法调用而不是属性访问
         paths_info = [
             ("Project Root", resolver.project_root, "."),
-            ("Deployment", resolver.deployment_dir, "deployment/"),
-            ("Manifests", resolver.manifests_dir, "deployment/manifests/"),
-            ("Releases", resolver.releases_dir, "deployment/releases/"),
-            ("Configs", resolver.configs_dir, "deployment/package-configs/"),
-            ("Output", resolver.dist_dir, "dist/"),
+            ("Deployment", resolver.get_deployment_dir(), "deployment/"),
+            ("Manifests", resolver.get_manifests_dir(), "deployment/manifests/"),
+            ("Releases", resolver.get_releases_dir(), "deployment/releases/"),
+            ("Configs", resolver.get_configs_dir(), "deployment/package-configs/"),
+            ("Output", resolver.get_dist_dir(), "dist/"),
         ]
 
         for name, abs_path, rel_path in paths_info:
@@ -85,10 +85,6 @@ def paths(ctx, resolve, tree, validate, show_config):
             console.print(f"  Absolute:  {resolved}")
             console.print(f"  Relative:  {relative}")
             console.print(f"  Exists:    {'Yes' if resolved.exists() else 'No'}")
-
-            # Detect path type
-            path_type = resolver.detect_path_type(resolved)
-            console.print(f"  Type:      {path_type.value}")
 
         except Exception as e:
             console.print(f"[red]Error resolving path: {e}[/red]")

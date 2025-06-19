@@ -221,6 +221,9 @@ COMPONENT_METADATA_KEYS = [
     "created_by"
 ]
 
+APP_NAME = "deploy-tool"
+LOG_FORMAT = "%(message)s"
+
 # Exit codes
 class ExitCode:
     SUCCESS = 0

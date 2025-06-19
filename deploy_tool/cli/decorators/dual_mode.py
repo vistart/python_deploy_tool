@@ -1,12 +1,12 @@
 """Dual-mode decorator for supporting both CLI and programmatic usage"""
 
 import functools
-from typing import Callable
+from typing import Callable, Optional
 
 import click
 
 
-def dual_mode_command(name: str = None) -> Callable:
+def dual_mode_command(name: Optional[str] = None):
     """
     Decorator to support both CLI and programmatic calls
 
@@ -66,7 +66,15 @@ def dual_mode_command(name: str = None) -> Callable:
 
         return wrapper
 
-    return decorator
+    # Handle both @dual_mode_command and @dual_mode_command()
+    if callable(name):
+        # Called as @dual_mode_command without parentheses
+        func = name
+        name = None
+        return decorator(func)
+    else:
+        # Called as @dual_mode_command() or @dual_mode_command(name="...")
+        return decorator
 
 
 def expose_api(cli_function: Callable) -> Callable:

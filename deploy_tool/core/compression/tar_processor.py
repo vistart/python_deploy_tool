@@ -9,7 +9,7 @@ from typing import List, Optional, Tuple, Callable, Dict, Any
 sys.path.append(str(Path(__file__).parent.parent.parent.parent))
 
 try:
-    from tar_compressor import (
+    from .tar_compressor import (
         AsyncTarProcessor as _AsyncTarProcessor,
         CompressionType as _CompressionType,
         OperationStats

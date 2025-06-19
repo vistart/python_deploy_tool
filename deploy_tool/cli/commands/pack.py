@@ -32,7 +32,7 @@ console = Console()
 @click.option('--batch', type=click.Path(exists=True), help='Batch pack config file')
 @click.pass_context
 @require_project
-@dual_mode_command
+@dual_mode_command  # Note: No parentheses - this is a decorator, not a function call
 def pack(ctx, source, package_type, version, auto, wizard, config, output,
          compress, level, force, save_config, dry_run, batch):
     """Pack files or directories into deployment packages
@@ -42,84 +42,149 @@ def pack(ctx, source, package_type, version, auto, wizard, config, output,
 
     Examples:
 
-        # Auto mode (must specify type and version)
-        deploy-tool pack ./models --auto --type model --version 1.0.1
-
-        # Wizard mode (interactive)
+        # Interactive wizard mode (recommended for first time)
         deploy-tool pack --wizard
 
-        # Using config file
-        deploy-tool pack --config model.yaml
+        # Auto mode with minimal input
+        deploy-tool pack ./models --auto --type model --version 1.0.0
 
-        # Batch packing
-        deploy-tool pack --batch batch-pack.yaml
+        # Use existing config file
+        deploy-tool pack --config deployment/package-configs/model-v1.yaml
+
+        # Batch processing
+        deploy-tool pack --batch deployment/batch-pack.yaml
+
+    Source Priority:
+        1. Command argument (e.g., ./models)
+        2. Config file source
+        3. Interactive selection
     """
     try:
-        # Handle batch mode
-        if batch:
-            packer = Packer()
-            results = run_async(packer.pack_batch_async(batch))
-            for result in results:
-                format_pack_result(result)
-            return
-
-        # Handle wizard mode
-        if wizard:
-            wizard = PackWizard()
-            config_data = run_async(wizard.run())
-            if not config_data:
-                console.print("[yellow]Wizard cancelled[/yellow]")
-                sys.exit(0)
-            config = config_data  # Use wizard result as config
-
-        # Validate required parameters for auto mode
-        if auto and not config:
-            if not package_type:
-                raise MissingTypeError()
-            if not version:
-                raise MissingVersionError()
-
-        # Create packer
+        # Create packer instance
         packer = Packer()
 
-        # Execute packing
-        if dry_run:
-            console.print("[yellow]Dry run mode - no actual packing[/yellow]")
+        # Handle different modes
+        if wizard:
+            # Interactive wizard mode
+            wizard = PackWizard(ctx.obj.path_resolver)
+            result = run_async(wizard.run())
+            if not result:
+                console.print("[yellow]Wizard cancelled[/yellow]")
+                sys.exit(0)
 
-        if config:
-            result = run_async(packer.pack_with_config_async(config))
+            # Run packing with wizard result
+            pack_result = packer.pack(
+                source_path=result['source'],
+                package_type=result['type'],
+                version=result['version'],
+                output_path=result.get('output'),
+                compress=result.get('compress', compress),
+                level=result.get('level', level),
+                force=result.get('force', force),
+                save_config=result.get('save_config', save_config),
+                metadata=result.get('metadata', {})
+            )
+
+        elif batch:
+            # Batch mode
+            results = packer.pack_batch(batch)
+
+            # Display batch results
+            console.print(f"\n[green]Batch pack completed: {len(results)} packages[/green]")
+            for result in results:
+                if result.error:
+                    console.print(f"  [red]✗[/red] {result.source_path}: {result.error}")
+                else:
+                    console.print(f"  [green]✓[/green] {result.source_path}")
+
+            # Check if any failed
+            failed = [r for r in results if not r.success]
+            if failed:
+                sys.exit(1)
+            return
+
+        elif config:
+            # Config file mode
+            pack_result = packer.pack_with_config(
+                config_path=config,
+                version=version,  # Can override version
+                output_path=output,
+                force=force,
+                dry_run=dry_run
+            )
+
         elif auto:
-            result = run_async(packer.auto_pack_async(
+            # Auto mode - validate required parameters
+            if not package_type:
+                raise MissingTypeError("--type is required for auto mode")
+            if not version:
+                raise MissingVersionError("--version is required for auto mode")
+
+            # Use source from argument or current directory
+            pack_source = source or '.'
+
+            # Run auto pack
+            pack_result = packer.auto_pack(
+                source_path=pack_source,
+                package_type=package_type,
+                version=version,
+                save_config=save_config,
+                compress=compress,
+                level=level,
+                force=force,
+                output_path=output
+            )
+
+        else:
+            # Standard mode - need at least source
+            if not source:
+                console.print("[red]Error: SOURCE argument is required[/red]")
+                console.print("\nSpecify a source directory or file to pack:")
+                console.print("  deploy-tool pack ./models --type model --version 1.0.0")
+                console.print("\nOr use one of these modes:")
+                console.print("  --wizard   : Interactive mode (recommended)")
+                console.print("  --auto     : Auto mode with config generation")
+                console.print("  --config   : Use existing config file")
+                console.print("  --batch    : Batch processing")
+                sys.exit(1)
+
+            if not package_type:
+                console.print("[red]Error: --type is required[/red]")
+                console.print("\nSpecify the package type:")
+                console.print("  deploy-tool pack ./models --type model --version 1.0.0")
+                sys.exit(1)
+
+            if not version:
+                console.print("[red]Error: --version is required[/red]")
+                console.print("\nSpecify the version:")
+                console.print("  deploy-tool pack ./models --type model --version 1.0.0")
+                sys.exit(1)
+
+            # Standard pack
+            pack_result = packer.pack(
                 source_path=source,
                 package_type=package_type,
                 version=version,
                 output_path=output,
-                compression_algorithm=compress,
-                compression_level=level,
+                compress=compress,
+                level=level,
                 force=force,
-                save_config=save_config
-            ))
-        else:
-            # Show help if no mode specified
-            console.print("[red]Error: Must specify --auto, --wizard, or --config[/red]")
-            console.print("\nExamples:")
-            console.print("  deploy-tool pack ./models --auto --type model --version 1.0.1")
-            console.print("  deploy-tool pack --wizard")
-            console.print("  deploy-tool pack --config model.yaml")
-            sys.exit(1)
+                save_config=save_config,
+                metadata={}
+            )
 
-        # Display result
-        format_pack_result(result)
+        # Display results
+        format_pack_result(pack_result)
 
         # Show git advice if needed
-        if result.success and result.manifest_path:
-            show_git_advice(result.manifest_path)
+        if pack_result.manifest_path and not dry_run:
+            show_git_advice(pack_result.manifest_path)
 
     except (PackError, MissingTypeError, MissingVersionError) as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[red]Pack error: {e}[/red]")
         sys.exit(1)
     except Exception as e:
-        console.print(f"[red]Unexpected error:[/red] {e}")
+        console.print(f"[red]Unexpected error: {e}[/red]")
         if ctx.obj.debug:
             console.print_exception()
         sys.exit(1)

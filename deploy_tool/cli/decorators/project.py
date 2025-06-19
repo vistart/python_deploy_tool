@@ -11,35 +11,47 @@ console = Console()
 
 
 def require_project(func: Callable) -> Callable:
-    """
-    Decorator that ensures a valid project context exists
+    """Decorator that ensures a valid project context exists
 
-    This decorator checks that:
-    1. A project root has been found
-    2. The path resolver is initialized
-
-    If no project is found, it shows an error and suggests running 'init'.
+    This decorator:
+    1. Marks the context as requiring a project
+    2. Triggers lazy loading of project root and path resolver
+    3. Checks that a valid project was found
+    4. Shows appropriate error messages if no project exists
 
     Example:
         @click.command()
         @require_project
         def pack(ctx, ...):
             # Can safely use ctx.obj.path_resolver
+
+    Args:
+        func: The command function to decorate
+
+    Returns:
+        Wrapped function that checks for project context
     """
 
     @functools.wraps(func)
     def wrapper(ctx: click.Context, *args, **kwargs):
-        # Check if we have a valid project context
-        if not hasattr(ctx.obj, 'path_resolver') or ctx.obj.path_resolver is None:
+        """Wrapper function that performs project checks"""
+
+        # Mark that this command requires a project
+        if hasattr(ctx.obj, 'require_project'):
+            ctx.obj.require_project()
+
+        # Access path_resolver to trigger lazy loading
+        if ctx.obj.path_resolver is None:
             console.print("[red]Error: No deployment project found[/red]")
             console.print("\nThis command must be run within a deployment project.")
             console.print("Look for a parent directory containing '.deploy-tool.yaml'")
             console.print("\n[yellow]Hint:[/yellow] Run 'deploy-tool init' to create a new project")
             sys.exit(1)
 
-        # Ensure project root is set
-        if not hasattr(ctx.obj, 'project_root') or ctx.obj.project_root is None:
+        # Also ensure project root is available
+        if ctx.obj.project_root is None:
             console.print("[red]Error: Project root not determined[/red]")
+            console.print("\nThis should not happen. Please report this issue.")
             sys.exit(1)
 
         # Call the original function
@@ -49,35 +61,44 @@ def require_project(func: Callable) -> Callable:
 
 
 def ensure_no_project(func: Callable) -> Callable:
-    """
-    Decorator that ensures NO project context exists
+    """Decorator that ensures NO project context exists (or warns if it does)
 
-    This is used for commands like 'init' that should not be run
-    inside an existing project.
+    This is used for commands like 'init' that create new projects.
+    It warns if running inside an existing project but doesn't block
+    the operation (user might want to re-initialize).
 
     Example:
         @click.command()
         @ensure_no_project
         def init(ctx, ...):
             # Safe to create new project
+
+    Args:
+        func: The command function to decorate
+
+    Returns:
+        Wrapped function that checks for existing project
     """
 
     @functools.wraps(func)
     def wrapper(ctx: click.Context, *args, **kwargs):
-        # For init command, we check if trying to init in existing project
-        # But only warn, don't block (user might want to re-init)
-        if hasattr(ctx.obj, 'path_resolver') and ctx.obj.path_resolver is not None:
-            project_root = ctx.obj.project_root
-            # Get the path argument if provided
-            if args and len(args) > 0:
-                target_path = args[0]
-            else:
-                target_path = '.'
+        """Wrapper function that checks for existing project"""
 
-            # Only warn if trying to init in the current project root
-            if str(project_root) == str(target_path):
-                console.print("[yellow]Warning: Already in a deployment project[/yellow]")
-                console.print(f"Project root: {project_root}")
+        # For init command, check if already in a project
+        # Note: We don't call require_project() here
+        if hasattr(ctx.obj, '_find_project_root_safe'):
+            existing_root = ctx.obj._find_project_root_safe()
+
+            if existing_root:
+                # Get the target path from args if provided
+                target_path = Path(args[0]) if args and len(args) > 0 else Path('.')
+                target_path = target_path.resolve()
+
+                # Only warn if trying to init in the current project root
+                if existing_root == target_path:
+                    console.print("[yellow]Warning: Already in a deployment project[/yellow]")
+                    console.print(f"Project root: {existing_root}")
+                    console.print()
 
         return func(ctx, *args, **kwargs)
 
@@ -85,11 +106,11 @@ def ensure_no_project(func: Callable) -> Callable:
 
 
 def with_project_defaults(func: Callable) -> Callable:
-    """
-    Decorator that applies project-specific defaults to command options
+    """Decorator that applies project-specific defaults to command options
 
-    This decorator can read project configuration and apply defaults
-    before the command executes.
+    This decorator reads project configuration and applies defaults
+    before the command executes. It's useful for commands that have
+    options that can be defaulted from project config.
 
     Example:
         @click.command()
@@ -98,11 +119,19 @@ def with_project_defaults(func: Callable) -> Callable:
         @with_project_defaults
         def pack(ctx, output, ...):
             # output will be set from project config if not provided
+
+    Args:
+        func: The command function to decorate
+
+    Returns:
+        Wrapped function with defaults applied
     """
 
     @functools.wraps(func)
     def wrapper(ctx: click.Context, *args, **kwargs):
-        # Load project configuration if available
+        """Wrapper function that applies project defaults"""
+
+        # Only apply defaults if we have a project context
         if hasattr(ctx.obj, 'path_resolver') and ctx.obj.path_resolver:
             try:
                 # Load project config

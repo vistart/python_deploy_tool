@@ -49,23 +49,50 @@ class ProjectRootCache:
 
 
 class PathResolver:
-    """Unified path resolver - Core of all path operations"""
+    """Unified path resolver - Core of all path operations
+
+    This class provides lazy initialization to avoid early project root detection.
+    Project root is only searched when first accessed.
+    """
 
     def __init__(self, project_root: Optional[Path] = None):
+        """Initialize path resolver
+
+        Args:
+            project_root: Explicit project root path. If provided, no search is performed.
+        """
         self._project_root = project_root
         self._cache = ProjectRootCache()
         self._paths_config: Optional[Dict[str, str]] = None
+        self._project_found = project_root is not None
+        self._find_attempted = False
 
     @property
     def project_root(self) -> Path:
-        """Get project root directory"""
-        if self._project_root is None:
+        """Get project root directory with lazy loading
+
+        Returns:
+            Path to project root
+
+        Raises:
+            ProjectNotFoundError: If no project root can be found
+        """
+        if self._project_root is None and not self._find_attempted:
+            self._find_attempted = True
             self._project_root = self.find_project_root()
+            self._project_found = True
+
+        if self._project_root is None:
+            from ..api.exceptions import ProjectNotFoundError
+            raise ProjectNotFoundError(
+                "No project root found. "
+                "Please run 'deploy-tool init' or ensure you're in a project directory."
+            )
+
         return self._project_root
 
     def find_project_root(self, start_path: Optional[Path] = None) -> Path:
-        """
-        Find project root directory by looking for marker files
+        """Find project root directory by looking for marker files
 
         Args:
             start_path: Starting directory (default: current working directory)
@@ -94,11 +121,10 @@ class PathResolver:
                 if marker_path.exists():
                     # Found project root
                     self._cache.cache_path_hierarchy(start_path, current)
-                    self._project_root = current
                     return current
             current = current.parent
 
-        # No project root found, use current directory with warning
+        # No project root found
         raise ProjectNotFoundError(
             f"No project root found from {start_path}. "
             f"Please run 'deploy-tool init' or create {PROJECT_CONFIG_FILE}"
@@ -106,8 +132,7 @@ class PathResolver:
 
     def resolve(self, path: Union[str, Path],
                 path_type: PathType = PathType.AUTO) -> Path:
-        """
-        Resolve path to absolute path based on type
+        """Resolve path to absolute path based on type
 
         Args:
             path: Path to resolve
@@ -122,29 +147,40 @@ class PathResolver:
         if path.is_absolute():
             return path
 
-        # Get base directory based on path type
-        if path_type == PathType.SOURCE or path_type == PathType.AUTO:
-            base = self.project_root
-        elif path_type == PathType.CONFIG:
-            base = self.get_configs_dir()
-        elif path_type == PathType.MANIFEST:
-            base = self.get_manifests_dir()
-        elif path_type == PathType.RELEASE:
-            base = self.get_releases_dir()
-        elif path_type == PathType.DIST:
-            base = self.get_dist_dir()
-        elif path_type == PathType.CACHE:
-            base = self.get_cache_dir()
-        elif path_type == PathType.ABSOLUTE:
+        # ABSOLUTE type doesn't need project root
+        if path_type == PathType.ABSOLUTE:
             return path.resolve()
-        else:
-            base = self.project_root
 
+        # Get base directory based on path type
+        base = self._get_base_for_type(path_type)
         return (base / path).resolve()
 
-    def to_relative(self, path: Union[str, Path]) -> Path:
+    def _get_base_for_type(self, path_type: PathType) -> Path:
+        """Get base directory for path type
+
+        Args:
+            path_type: Type of path
+
+        Returns:
+            Base directory path
         """
-        Convert absolute path to relative path from project root
+        if path_type == PathType.SOURCE or path_type == PathType.AUTO:
+            return self.project_root
+        elif path_type == PathType.CONFIG:
+            return self.get_configs_dir()
+        elif path_type == PathType.MANIFEST:
+            return self.get_manifests_dir()
+        elif path_type == PathType.RELEASE:
+            return self.get_releases_dir()
+        elif path_type == PathType.DIST:
+            return self.get_dist_dir()
+        elif path_type == PathType.CACHE:
+            return self.get_cache_dir()
+        else:
+            return self.project_root
+
+    def to_relative(self, path: Union[str, Path]) -> Path:
+        """Convert absolute path to relative path from project root
 
         Args:
             path: Path to convert
@@ -160,8 +196,7 @@ class PathResolver:
             return path
 
     def validate_path_within_project(self, path: Union[str, Path]) -> bool:
-        """
-        Check if path is within project boundaries
+        """Check if path is within project boundaries
 
         Args:
             path: Path to validate
@@ -221,8 +256,7 @@ class PathResolver:
         return cache_dir
 
     def get_manifest_path(self, component_type: str, version: str) -> Path:
-        """
-        Get manifest file path for a component
+        """Get manifest file path for a component
 
         Args:
             component_type: Component type
@@ -236,8 +270,7 @@ class PathResolver:
         return self.get_manifests_dir() / filename
 
     def get_release_path(self, version: str) -> Path:
-        """
-        Get release file path
+        """Get release file path
 
         Args:
             version: Release version
@@ -250,8 +283,7 @@ class PathResolver:
         return self.get_releases_dir() / filename
 
     def get_config_path(self, name: str) -> Path:
-        """
-        Get configuration file path
+        """Get configuration file path
 
         Args:
             name: Configuration name (without extension)
@@ -265,8 +297,7 @@ class PathResolver:
 
     def get_archive_path(self, component_type: str, version: str,
                          compression: str = "gz") -> Path:
-        """
-        Get archive file path
+        """Get archive file path
 
         Args:
             component_type: Component type
@@ -282,26 +313,42 @@ class PathResolver:
         return self.get_dist_dir() / filename
 
     def _get_path_config(self, key: str, default: str) -> str:
-        """Get path configuration value"""
+        """Get path configuration value with safe loading
+
+        Args:
+            key: Configuration key
+            default: Default value if not found
+
+        Returns:
+            Configuration value or default
+        """
         if self._paths_config is None:
-            self._load_paths_config()
+            self._load_paths_config_safe()
 
         if self._paths_config and key in self._paths_config:
             return self._paths_config[key]
         return default
 
-    def _load_paths_config(self) -> None:
-        """Load paths configuration from project config"""
+    def _load_paths_config_safe(self) -> None:
+        """Load paths configuration from project config safely
+
+        This method will not fail if project root is not available.
+        It will simply use an empty configuration.
+        """
+        self._paths_config = {}
+
         try:
-            config_file = self.project_root / PROJECT_CONFIG_FILE
-            if config_file.exists():
-                import yaml
-                with open(config_file, 'r') as f:
-                    config = yaml.safe_load(f)
-                    self._paths_config = config.get('paths', {})
+            # Only attempt to load if we have a project root
+            if self._project_found and self._project_root:
+                config_file = self._project_root / PROJECT_CONFIG_FILE
+                if config_file.exists():
+                    import yaml
+                    with open(config_file, 'r') as f:
+                        config = yaml.safe_load(f)
+                        self._paths_config = config.get('paths', {})
         except Exception:
-            # Ignore errors, use defaults
-            self._paths_config = {}
+            # Silently ignore errors, use empty config
+            pass
 
     def ensure_directories(self) -> None:
         """Ensure all required directories exist"""
@@ -318,8 +365,7 @@ class PathResolver:
             dir_path.mkdir(parents=True, exist_ok=True)
 
     def get_relative_to_root(self, path: Union[str, Path]) -> str:
-        """
-        Get path relative to project root as string
+        """Get path relative to project root as string
 
         Args:
             path: Path to convert
@@ -332,4 +378,7 @@ class PathResolver:
         return str(rel_path).replace(os.sep, '/')
 
     def __repr__(self) -> str:
-        return f"PathResolver(project_root={self.project_root})"
+        """String representation"""
+        if self._project_root:
+            return f"PathResolver(project_root={self._project_root})"
+        return "PathResolver(project_root=<not determined>)"

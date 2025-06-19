@@ -1,17 +1,20 @@
-"""Main CLI entry point"""
+"""Main CLI entry point for deploy-tool"""
 
+import os
 import sys
+import logging
 from pathlib import Path
 from typing import Optional
 
 import click
 from rich.console import Console
+from rich.logging import RichHandler
 
-from .. import __version__
-from ..core import PathResolver
+from ..constants import APP_NAME, LOG_FORMAT
+from ..core import PathResolver, ProjectManager
 from ..api.exceptions import ProjectNotFoundError
 
-# Import commands
+# Import all commands
 from .commands import (
     init,
     pack,
@@ -20,75 +23,164 @@ from .commands import (
     component,
     release,
     doctor,
-    paths,
+    paths
 )
 
 console = Console()
 
 
-class GlobalContext:
-    """Global context for CLI"""
+def setup_logging(verbose: bool = False, debug: bool = False) -> None:
+    """Setup logging configuration
+
+    Args:
+        verbose: Enable verbose output (INFO level)
+        debug: Enable debug output (DEBUG level)
+    """
+    if debug:
+        level = logging.DEBUG
+    elif verbose:
+        level = logging.INFO
+    else:
+        level = logging.WARNING
+
+    # Configure rich handler
+    logging.basicConfig(
+        level=level,
+        format=LOG_FORMAT,
+        handlers=[
+            RichHandler(
+                console=console,
+                show_time=debug,
+                show_path=debug,
+                rich_tracebacks=True,
+                tracebacks_suppress=[click]
+            )
+        ]
+    )
+
+    # Adjust third-party loggers
+    logging.getLogger("asyncio").setLevel(logging.WARNING)
+    logging.getLogger("aiofiles").setLevel(logging.WARNING)
+
+
+class Context:
+    """CLI context object with lazy project initialization
+
+    This context implements lazy loading for project-related attributes.
+    Project root and path resolver are only initialized when accessed
+    by commands that require them.
+    """
 
     def __init__(self):
-        self.project_root: Optional[Path] = None
-        self.path_resolver: Optional[PathResolver] = None
+        """Initialize CLI context"""
+        self._project_root: Optional[Path] = None
+        self._path_resolver: Optional[PathResolver] = None
+        self._project_manager: Optional[ProjectManager] = None
         self.verbose: bool = False
         self.debug: bool = False
-        self.no_color: bool = False
+        self._project_checked: bool = False
+        self._project_required: bool = False
 
+    def require_project(self) -> None:
+        """Mark that the current command requires a project context"""
+        self._project_required = True
 
-@click.group(invoke_without_command=True)
-@click.option('--version', '-V', is_flag=True, help='Show version and exit')
-@click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-@click.option('--debug', is_flag=True, help='Debug mode')
-@click.option('--project-root', type=click.Path(exists=True), help='Project root directory')
-@click.option('--config', '-c', type=click.Path(exists=True), help='Global configuration file')
-@click.option('--no-color', is_flag=True, help='Disable colored output')
-@click.pass_context
-def cli(ctx, version, verbose, debug, project_root, config, no_color):
-    """Deploy Tool - A powerful deployment tool for ML models and algorithms"""
+    @property
+    def project_root(self) -> Optional[Path]:
+        """Get project root directory (lazy loading)
 
-    # Handle version flag
-    if version:
-        click.echo(f"deploy-tool version {__version__}")
-        ctx.exit(0)
+        Returns:
+            Project root path or None if not in a project
+        """
+        if self._project_required and not self._project_checked:
+            self._check_project()
+        return self._project_root
 
-    # Show help if no command
-    if ctx.invoked_subcommand is None:
-        click.echo(ctx.get_help())
-        ctx.exit(0)
+    @property
+    def path_resolver(self) -> Optional[PathResolver]:
+        """Get path resolver instance (lazy loading)
 
-    # Create global context
-    global_ctx = GlobalContext()
-    global_ctx.verbose = verbose
-    global_ctx.debug = debug
-    global_ctx.no_color = no_color
+        Returns:
+            PathResolver instance or None if not in a project
+        """
+        if self._project_required and not self._project_checked:
+            self._check_project()
+        return self._path_resolver
 
-    # Handle project root
-    if project_root:
-        global_ctx.project_root = Path(project_root)
-        global_ctx.path_resolver = PathResolver(global_ctx.project_root)
-    else:
-        # Try to find project root
+    def _check_project(self) -> None:
+        """Check for project existence and initialize if found
+
+        This method is called only once when a project-requiring command
+        is executed. It attempts to find the project root and create
+        the necessary instances.
+        """
+        self._project_checked = True
+
         try:
-            global_ctx.path_resolver = PathResolver()
-            global_ctx.project_root = global_ctx.path_resolver.project_root
+            if self._project_manager is None:
+                self._project_manager = ProjectManager()
+
+            # Try to find project root without throwing exception
+            project_root = self._find_project_root_safe()
+
+            if project_root:
+                self._project_root = project_root
+                self._path_resolver = PathResolver(project_root)
+                if self.debug:
+                    console.print(f"[dim]Project root: {project_root}[/dim]")
+            else:
+                # No project found - commands will handle this
+                if self.debug:
+                    console.print("[dim]No project found in current directory tree[/dim]")
+
+        except Exception as e:
+            # Log error but don't fail - let commands handle it
+            if self.debug:
+                console.print(f"[dim]Error checking for project: {e}[/dim]")
+
+    def _find_project_root_safe(self) -> Optional[Path]:
+        """Find project root without throwing exceptions
+
+        Returns:
+            Project root path or None if not found
+        """
+        try:
+            # Create a temporary resolver to search for project
+            temp_resolver = PathResolver()
+            return temp_resolver.find_project_root()
         except ProjectNotFoundError:
-            # Only error if not running init command
-            if ctx.invoked_subcommand != 'init':
-                global_ctx.path_resolver = None
-                global_ctx.project_root = None
+            return None
+        except Exception:
+            # Any other error, return None
+            return None
 
-    # Store in click context
-    ctx.obj = global_ctx
 
-    # Configure console
-    if no_color:
-        console.no_color = True
+@click.group(name=APP_NAME)
+@click.option('-v', '--verbose', is_flag=True, help='Enable verbose output')
+@click.option('-d', '--debug', is_flag=True, help='Enable debug output')
+@click.option('-q', '--quiet', is_flag=True, help='Suppress all output except errors')
+@click.pass_context
+def cli(ctx, verbose, debug, quiet):
+    """Deploy Tool - Package and deploy non-code resources
 
-    # Show debug info
-    if debug and global_ctx.project_root:
-        console.print(f"[dim]Project root: {global_ctx.project_root}[/dim]")
+    This tool helps you package, publish, and deploy non-code resources
+    such as model weights, configuration files, and runtime environments.
+
+    Code files are managed through Git and don't need packaging.
+    This tool is designed for binary assets and large files.
+    """
+    # Setup logging
+    if quiet:
+        logging.disable(logging.CRITICAL)
+    else:
+        setup_logging(verbose=verbose, debug=debug)
+
+    # Create context with lazy initialization
+    ctx.obj = Context()
+    ctx.obj.verbose = verbose
+    ctx.obj.debug = debug
+
+    # Don't check for project here - let commands that need it check
 
 
 # Register commands
@@ -102,38 +194,34 @@ cli.add_command(doctor.doctor)
 cli.add_command(paths.paths)
 
 
-def main(args=None):
-    """Main entry point"""
+def main():
+    """Main entry point for the CLI application
+
+    This function handles:
+    - Auto-help for incomplete commands
+    - Keyboard interrupts
+    - Unexpected exceptions with proper error display
+    """
     try:
-        # Handle both CLI and programmatic calls
-        if args is None:
-            args = sys.argv[1:]
+        # Handle help for incomplete commands
+        if len(sys.argv) == 2 and sys.argv[1] not in [
+            '-h', '--help', '-v', '--verbose', '-d', '--debug', '-q', '--quiet'
+        ]:
+            # If only command name provided, show its help
+            sys.argv.append('--help')
 
-        # Special handling for python -m deploy_tool
-        if not args and len(sys.argv) > 0:
-            # Show help when no arguments
-            cli.main(['--help'])
-        else:
-            cli.main(args)
+        cli(prog_name=APP_NAME)
 
-    except click.ClickException as e:
-        e.show()
-        sys.exit(e.exit_code)
-    except ProjectNotFoundError as e:
-        console.print(f"[red]Error:[/red] {e}")
-        console.print("\n[yellow]Hint:[/yellow] Run 'deploy-tool init' to initialize a project")
-        sys.exit(1)
     except KeyboardInterrupt:
         console.print("\n[yellow]Operation cancelled by user[/yellow]")
         sys.exit(130)
+
     except Exception as e:
-        if '--debug' in sys.argv:
+        console.print(f"[red]Unexpected error: {e}[/red]")
+        if '--debug' in sys.argv or '-d' in sys.argv:
             console.print_exception()
-        else:
-            console.print(f"[red]Error:[/red] {e}")
-            console.print("\n[dim]Run with --debug for full traceback[/dim]")
         sys.exit(1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

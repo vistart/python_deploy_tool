@@ -11,7 +11,6 @@ from ..decorators import require_project, dual_mode_command
 from ..utils.output import format_deploy_result
 from ...api import Deployer
 from ...api.exceptions import DeployError, ReleaseNotFoundError, ComponentNotFoundError
-from ...utils.async_utils import run_async
 
 console = Console()
 
@@ -39,49 +38,44 @@ def deploy(ctx, release, component, target, env, verify, rollback,
 
     Examples:
 
-        # Deploy release version
-        deploy-tool deploy --release 2024.01.20 --target production
-
-        # Deploy to local directory
-        deploy-tool deploy --release 2024.01.20 --target ~/deployments/
+        # Deploy release to local directory
+        deploy-tool deploy --release 2024.01.20 --target ./production
 
         # Deploy single component
-        deploy-tool deploy --component model:1.0.1 --target dev-server
+        deploy-tool deploy --component model:1.0.1 --target ./test
 
-        # Deploy with rollback enabled
-        deploy-tool deploy --release 2024.01.20 --target production --rollback
+        # Deploy to named server
+        deploy-tool deploy --release 2024.01.20 --target prod-server
+
+        # Deploy with environment
+        deploy-tool deploy --release 2024.01.20 --target . --env production
     """
     try:
-        # Validate arguments
+        # Validation
         if not release and not component:
-            console.print("[red]Error: Must specify --release or --component[/red]")
+            console.print("[red]Error:[/red] Must specify either --release or --component")
             sys.exit(1)
 
         if release and component:
-            console.print("[red]Error: Cannot specify both --release and --component[/red]")
+            console.print("[red]Error:[/red] Cannot specify both --release and --component")
             sys.exit(1)
 
         # Show confirmation
         if not no_confirm and not dry_run:
+            table = Table(title="Deployment Details", box=None)
+            table.add_column("Item", style="cyan")
+            table.add_column("Value", style="green")
+
             if release:
-                console.print(f"Deploy release: [bold]{release}[/bold]")
+                table.add_row("Release", release)
             else:
-                console.print(f"Deploy component: [bold]{component}[/bold]")
+                table.add_row("Component", component)
 
-            console.print(f"Target: [cyan]{target}[/cyan]")
+            table.add_row("Target", target)
             if env:
-                console.print(f"Environment: [yellow]{env}[/yellow]")
+                table.add_row("Environment", env)
 
-            options = []
-            if verify:
-                options.append("verify")
-            if rollback:
-                options.append("rollback on failure")
-            if force:
-                options.append("force")
-
-            if options:
-                console.print(f"Options: {', '.join(options)}")
+            console.print(table)
 
             if not Confirm.ask("\n[cyan]Proceed with deployment?[/cyan]"):
                 console.print("[yellow]Deployment cancelled[/yellow]")
@@ -101,21 +95,23 @@ def deploy(ctx, release, component, target, env, verify, rollback,
 
         # Execute deployment
         if release:
-            result = run_async(deployer.deploy_release_async(
+            # Use deploy_release() method instead of deploy_release_async()
+            result = deployer.deploy_release(
                 release_version=release,
                 target=target,
                 verify=verify,
                 rollback_on_failure=rollback
-            ))
+            )
         else:
             # Parse component spec
             comp_type, comp_version = component.split(':', 1)
-            result = run_async(deployer.deploy_component_async(
+            # Use deploy_component() method instead of deploy_component_async()
+            result = deployer.deploy_component(
                 component_type=comp_type,
                 component_version=comp_version,
                 target=target,
                 verify=verify
-            ))
+            )
 
         # Display result
         format_deploy_result(result)

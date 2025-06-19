@@ -12,7 +12,6 @@ from ..utils.output import format_publish_result
 from ...api import Publisher
 from ...api.exceptions import PublishError, ComponentNotFoundError
 from ...models import Component
-from ...utils.async_utils import run_async
 
 console = Console()
 
@@ -100,14 +99,14 @@ def publish(ctx, component, release_version, release_name, config,
         # Create publisher
         publisher = Publisher()
 
-        # Publish components
-        result = run_async(publisher.publish_async(
+        # Use publish() method instead of publish_async()
+        result = publisher.publish(
             components=components,
             release_version=release_version,
             release_name=release_name,
             force=force,
             atomic=atomic
-        ))
+        )
 
         # Display result
         format_publish_result(result)

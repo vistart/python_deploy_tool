@@ -1,32 +1,25 @@
-"""Result models for operations"""
+"""Result models for deploy-tool operations"""
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import List, Optional, Dict, Any
 
-from .component import Component, PublishComponent
+from .component import Component
 
 
 @dataclass
 class PackResult:
-    """Packing operation result"""
+    """Pack operation result"""
     success: bool
     package_type: str
     version: str
     manifest_path: Optional[str] = None
     archive_path: Optional[str] = None
+    archive_size: Optional[int] = None
     config_path: Optional[str] = None
     error: Optional[str] = None
     duration: float = 0.0
     metadata: Dict[str, Any] = field(default_factory=dict)
     git_suggestions: List[str] = field(default_factory=list)
-
-    @property
-    def archive_size(self) -> Optional[int]:
-        """Get archive size if available"""
-        if self.archive_path and Path(self.archive_path).exists():
-            return Path(self.archive_path).stat().st_size
-        return None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -34,21 +27,21 @@ class PackResult:
             'success': self.success,
             'package_type': self.package_type,
             'version': self.version,
-            'duration': self.duration
+            'duration': self.duration,
+            'metadata': self.metadata,
+            'git_suggestions': self.git_suggestions
         }
 
         if self.manifest_path:
             data['manifest_path'] = self.manifest_path
         if self.archive_path:
             data['archive_path'] = self.archive_path
+        if self.archive_size is not None:
+            data['archive_size'] = self.archive_size
         if self.config_path:
             data['config_path'] = self.config_path
         if self.error:
             data['error'] = self.error
-        if self.metadata:
-            data['metadata'] = self.metadata
-        if self.git_suggestions:
-            data['git_suggestions'] = self.git_suggestions
 
         return data
 
@@ -56,20 +49,19 @@ class PackResult:
 @dataclass
 class ComponentPublishResult:
     """Single component publish result"""
-    component: PublishComponent
+    component: Component
     success: bool
-    storage_path: Optional[str] = None
+    storage_path: str
     error: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         data = {
             'component': self.component.to_dict(),
-            'success': self.success
+            'success': self.success,
+            'storage_path': self.storage_path
         }
 
-        if self.storage_path:
-            data['storage_path'] = self.storage_path
         if self.error:
             data['error'] = self.error
 
@@ -78,23 +70,13 @@ class ComponentPublishResult:
 
 @dataclass
 class PublishResult:
-    """Publishing operation result"""
+    """Publish operation result"""
     success: bool
     release_version: Optional[str] = None
     release_manifest: Optional[str] = None
     components: List[ComponentPublishResult] = field(default_factory=list)
     error: Optional[str] = None
     duration: float = 0.0
-
-    @property
-    def total_size(self) -> int:
-        """Get total size of published components"""
-        return sum(c.component.archive_size for c in self.components)
-
-    @property
-    def successful_count(self) -> int:
-        """Get count of successfully published components"""
-        return sum(1 for c in self.components if c.success)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -118,17 +100,20 @@ class PublishResult:
 class DeployResult:
     """Deployment operation result"""
     success: bool
-    target_host: str
+    deploy_type: str  # "release" or "component"
+    deploy_target: str
     deployed_components: List[Component] = field(default_factory=list)
     error: Optional[str] = None
     duration: float = 0.0
+    verification: Optional['VerifyResult'] = None
     rollback_available: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         data = {
             'success': self.success,
-            'target_host': self.target_host,
+            'deploy_type': self.deploy_type,
+            'deploy_target': self.deploy_target,
             'duration': self.duration,
             'rollback_available': self.rollback_available,
             'deployed_components': [c.to_dict() for c in self.deployed_components]
@@ -136,6 +121,9 @@ class DeployResult:
 
         if self.error:
             data['error'] = self.error
+
+        if self.verification:
+            data['verification'] = self.verification.to_dict()
 
         return data
 

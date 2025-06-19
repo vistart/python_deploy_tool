@@ -1,15 +1,16 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel", "setuptools-scm>=7.0"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "deploy-tool"
-dynamic = ["version"]  # 使用 setuptools-scm 自动版本
+# 从 deploy_tool/__init__.py 动态读取版本
+dynamic = ["version"]
 description = "A powerful deployment tool for ML models and algorithms"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "Your Team", email = "team@example.com"},
+    {name = "vistart", email = "i@vistart.me"},
 ]
 keywords = ["deployment", "machine-learning", "packaging", "devops"]
 classifiers = [
@@ -24,6 +25,8 @@ classifiers = [
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Operating System :: OS Independent",
     "Typing :: Typed",
 ]
@@ -68,34 +71,49 @@ all = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourteam/deploy-tool"
-Documentation = "https://deploy-tool.readthedocs.io"
-Repository = "https://github.com/yourteam/deploy-tool.git"
-Issues = "https://github.com/yourteam/deploy-tool/issues"
-Changelog = "https://github.com/yourteam/deploy-tool/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/vistart/python_deploy_tool"
+Documentation = "https://vistart_python_deploy_tool.readthedocs.io"
+Repository = "https://github.com/vistart/python_deploy-tool.git"
+Issues = "https://github.com/vistart/python_deploy_tool/issues"
+Changelog = "https://github.com/vistart/python_deploy_tool/blob/main/CHANGELOG.md"
 
 [project.scripts]
 deploy-tool = "deploy_tool.cli.main:main"
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["deploy_tool*"]
-exclude = ["tests*", "docs*", "examples*", "scripts*"]
+[tool.hatch.version]
+path = "deploy_tool/__init__.py"
+pattern = '^__version__\s*=\s*"(?P<version>[^"]+)"$'
 
-[tool.setuptools.package-data]
-deploy_tool = [
-    "templates/**/*",
-    "py.typed",
+[tool.hatch.build]
+include = [
+    "deploy_tool/**/*.py",
+    "deploy_tool/**/*.pyi",
+    "deploy_tool/py.typed",
+    "deploy_tool/templates/**/*",
+    "LICENSE",
+    "README.md",
+]
+exclude = [
+    "tests/**",
+    "docs/**",
+    "examples/**",
+    "scripts/**",
+    "*.pyc",
+    "**/__pycache__",
+    "**/*.py[cod]",
+    "**/*.so",
+    "**/.DS_Store",
+    "**/.*.swp",
+    ".git*",
 ]
 
-[tool.setuptools_scm]
-write_to = "deploy_tool/_version.py"
-version_scheme = "post-release"
-local_scheme = "no-local-version"
+[tool.hatch.build.targets.wheel]
+packages = ["deploy_tool"]
 
+# 保留其他工具配置
 [tool.black]
 line-length = 88
-target-version = ['py38', 'py39', 'py310', 'py311']
+target-version = ['py38', 'py39', 'py310', 'py311', 'py312', 'py313']
 include = '\.pyi?$'
 
 [tool.isort]

@@ -4,7 +4,12 @@ This tool provides a unified solution for packaging, publishing, and deploying
 various components of machine learning projects.
 """
 
-from .__version__ import __version__, __version_info__, __author__, __email__, __license__
+__version__ = "1.0.0"
+__version_info__ = (1, 0, 0)
+__author__ = "vistart"
+__email__ = "i@vistart.me"
+__license__ = "MIT"
+__copyright__ = "Copyright 2025 vistart"
 
 # Core API
 from .api.packer import Packer, pack

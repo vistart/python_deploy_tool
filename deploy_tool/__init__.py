@@ -4,23 +4,20 @@ This tool provides a unified solution for packaging, publishing, and deploying
 various components of machine learning projects.
 """
 
-__version__ = "1.0.0"
-__author__ = "vistart"
-__email__ = "i@vistart.me"
-__license__ = "MIT"
+from .__version__ import __version__, __version_info__, __author__, __email__, __license__
 
-# 核心API导出
+# Core API
 from .api.packer import Packer, pack
 from .api.publisher import Publisher, publish
 from .api.deployer import Deployer, deploy
 from .api.query import query
 
-# 数据模型导出
+# Data models
 from .models.component import Component, PublishComponent
 from .models.result import PackResult, PublishResult, DeployResult
 from .models.manifest import Manifest, ReleaseManifest
 
-# 异常导出
+# Exceptions
 from .api.exceptions import (
     DeployToolError,
     PackError,
@@ -35,7 +32,7 @@ from .api.exceptions import (
     ProjectNotFoundError,
 )
 
-# 工具函数导出
+# Utility functions
 from .utils import (
     find_manifest,
     list_components,
@@ -45,24 +42,25 @@ from .utils import (
 )
 
 __all__ = [
-    # 版本信息
+    # Version information
     "__version__",
+    "__version_info__",
     "__author__",
     "__email__",
     "__license__",
 
-    # 主要类
+    # Main classes
     "Packer",
     "Publisher",
     "Deployer",
 
-    # 便捷函数
+    # Core API functions
     "pack",
     "publish",
     "deploy",
     "query",
 
-    # 数据模型
+    # Data models
     "Component",
     "PublishComponent",
     "PackResult",
@@ -71,7 +69,7 @@ __all__ = [
     "Manifest",
     "ReleaseManifest",
 
-    # 异常类
+    # Exceptions
     "DeployToolError",
     "PackError",
     "MissingTypeError",
@@ -84,7 +82,7 @@ __all__ = [
     "PathError",
     "ProjectNotFoundError",
 
-    # 工具函数
+    # Utility functions
     "find_manifest",
     "list_components",
     "list_releases",

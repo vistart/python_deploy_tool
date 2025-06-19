@@ -189,4 +189,4 @@ test-results/
 !deployment/package-configs/
 
 # Auto-generated version file
-deploy_tool/_version.py
+deploy_tool/__version__.py

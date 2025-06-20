@@ -1,10 +1,12 @@
 """Publish service implementation"""
 
-import time
+import asyncio
+import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional
 
+<<<<<<< Updated upstream
 from ..api.exceptions import (
     PublishError,
     ComponentNotFoundError,
@@ -16,60 +18,79 @@ from ..core import (
     StorageManager,
     ComponentRegistry,
     GitAdvisor,
+=======
+from ..cli.utils.output import console
+from ..constants import (
+    ErrorCode,
+    StorageType,
+    EMOJI_SUCCESS,
+    EMOJI_CLOUD,
+    EMOJI_SERVER
+>>>>>>> Stashed changes
 )
+from ..core.manifest_engine import ManifestEngine
+from ..core.storage_manager import StorageManager
 from ..models import (
     PublishResult,
-    ComponentPublishResult,
-    PublishComponent,
+    PublishLocationResult,
+    OperationStatus,
+    ErrorDetail,
+    LocationInfo,
+    Manifest
 )
+<<<<<<< Updated upstream
 from ..models.manifest import ReleaseManifest, ComponentRef
 from ..utils.file_utils import get_directory_size, format_bytes
+=======
+from ..models.config import Config, PublishTarget
+from ..utils.file_utils import calculate_file_checksum, get_file_size
+>>>>>>> Stashed changes
 
 
 class PublishService:
-    """Publishing service implementation"""
+    """Service for publishing components to targets"""
 
-    def __init__(self,
-                 storage_manager: StorageManager,
-                 manifest_engine: ManifestEngine,
-                 component_registry: ComponentRegistry):
-        """
-        Initialize publish service
+    def __init__(self, config: Config, storage_manager: StorageManager,
+                 manifest_engine: ManifestEngine):
+        """Initialize publish service
 
         Args:
+            config: Project configuration
             storage_manager: Storage manager instance
             manifest_engine: Manifest engine instance
-            component_registry: Component registry instance
         """
+        self.config = config
         self.storage_manager = storage_manager
         self.manifest_engine = manifest_engine
-        self.component_registry = component_registry
-        self.path_resolver = storage_manager.path_resolver
-        self.git_advisor = GitAdvisor(self.path_resolver)
 
-    async def publish(self,
-                      components: List[PublishComponent],
-                      release_version: Optional[str] = None,
-                      release_name: Optional[str] = None,
-                      options: Optional[Dict[str, Any]] = None) -> PublishResult:
-        """
-        Publish components workflow
+    async def publish_component(
+        self,
+        component_type: str,
+        version: str,
+        package_path: Path,
+        target_names: Optional[List[str]] = None,
+        interactive: bool = False
+    ) -> PublishResult:
+        """Publish a component to specified targets
 
         Args:
-            components: Components to publish
-            release_version: Release version
-            release_name: Release name
-            options: Additional options
+            component_type: Type of component
+            version: Component version
+            package_path: Path to package file
+            target_names: List of target names (None for defaults)
+            interactive: Whether to show interactive prompts
 
         Returns:
-            PublishResult: Publishing result
+            PublishResult with status and details
         """
-        start_time = time.time()
-        options = options or {}
-        published_components = []
-        errors = []
+        result = PublishResult(
+            status=OperationStatus.IN_PROGRESS,
+            component_type=component_type,
+            component_version=version
+        )
 
         try:
+<<<<<<< Updated upstream
             # 1. Validate components
             await self._validate_components(components)
 
@@ -87,9 +108,18 @@ class PublishService:
                 comp_result = await self._publish_single_component(
                     component,
                     options.get('force', False)
+=======
+            # Validate package exists
+            if not package_path.exists():
+                result.add_error(
+                    ErrorCode.SOURCE_NOT_FOUND,
+                    f"Package file not found: {package_path}"
+>>>>>>> Stashed changes
                 )
-                published_components.append(comp_result)
+                result.complete(OperationStatus.FAILED)
+                return result
 
+<<<<<<< Updated upstream
                 if not comp_result.success:
                     errors.append(comp_result.error)
                     if options.get('atomic', True):
@@ -186,8 +216,24 @@ class PublishService:
             if not manifest_path.exists():
                 raise ComponentNotFoundError(
                     f"Component manifest not found: {component.type}:{component.version}"
-                )
+=======
+            # Load or create manifest
+            manifest = await self._load_or_create_manifest(
+                component_type, version, package_path
+            )
 
+            # Determine targets
+            targets = self._determine_targets(target_names)
+            if not targets:
+                result.add_error(
+                    ErrorCode.MISSING_REQUIRED_PARAMETER,
+                    "No publish targets specified or configured"
+>>>>>>> Stashed changes
+                )
+                result.complete(OperationStatus.FAILED)
+                return result
+
+<<<<<<< Updated upstream
             # Check if archive exists
             archive_path = self.path_resolver.get_archive_path(
                 component.type,
@@ -306,53 +352,284 @@ class PublishService:
             },
             components=component_refs,
             metadata=metadata
+=======
+            # Publish to each target
+            tasks = []
+            for target in targets:
+                task = self._publish_to_target(
+                    manifest, package_path, target
+                )
+                tasks.append(task)
+
+            # Execute all publish tasks
+            target_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Process results
+            for target, target_result in zip(targets, target_results):
+                if isinstance(target_result, Exception):
+                    # Handle exception
+                    location_result = PublishLocationResult(
+                        target_name=target.name,
+                        status=OperationStatus.FAILED,
+                        message=str(target_result),
+                        error=ErrorDetail(
+                            code=ErrorCode.STORAGE_CONNECTION_FAILED,
+                            message=str(target_result)
+                        )
+                    )
+                else:
+                    location_result = target_result
+
+                result.add_target_result(location_result)
+
+                # Update manifest with successful locations
+                if location_result.status == OperationStatus.SUCCESS:
+                    location_info = self._create_location_info(
+                        target, location_result
+                    )
+                    manifest.add_location(location_info)
+
+            # Save updated manifest if any successful publishes
+            if result.successful_targets:
+                await self.manifest_engine.save_manifest(manifest)
+                result.manifest_updated = True
+
+            # Show target-specific guidance
+            if interactive:
+                self._show_publish_guidance(result, targets)
+
+            # Set final status and message
+            if result.successful_targets:
+                if result.failed_targets:
+                    result.message = (
+                        f"Published to {len(result.successful_targets)} targets, "
+                        f"{len(result.failed_targets)} failed"
+                    )
+                else:
+                    result.message = f"Successfully published to all {len(result.successful_targets)} targets"
+            else:
+                result.message = "Failed to publish to any target"
+
+            result.complete()
+            return result
+
+        except Exception as e:
+            result.add_error(
+                ErrorCode.STORAGE_CONNECTION_FAILED,
+                f"Unexpected error during publish: {str(e)}"
+            )
+            result.complete(OperationStatus.FAILED)
+            return result
+
+    async def _load_or_create_manifest(
+        self,
+        component_type: str,
+        version: str,
+        package_path: Path
+    ) -> Manifest:
+        """Load existing manifest or create new one"""
+        # Try to load existing manifest
+        manifest = await self.manifest_engine.load_manifest(component_type, version)
+
+        if not manifest:
+            # Create new manifest
+            package_size = get_file_size(package_path)
+            checksum = calculate_file_checksum(package_path)
+
+            manifest = Manifest(
+                component_type=component_type,
+                component_version=version,
+                package={
+                    "file": package_path.name,
+                    "size": package_size,
+                    "checksum": {
+                        "algorithm": "sha256",
+                        "value": checksum
+                    }
+                }
+            )
+
+        return manifest
+
+    def _determine_targets(self, target_names: Optional[List[str]]) -> List[PublishTarget]:
+        """Determine which targets to publish to"""
+        if target_names:
+            # Use specified targets
+            targets = []
+            for name in target_names:
+                target = self.config.get_target(name)
+                if target and target.enabled:
+                    targets.append(target)
+            return targets
+        else:
+            # Use default targets
+            targets = []
+            for name in self.config.default_targets:
+                target = self.config.get_target(name)
+                if target and target.enabled:
+                    targets.append(target)
+            return targets
+
+    async def _publish_to_target(
+        self,
+        manifest: Manifest,
+        package_path: Path,
+        target: PublishTarget
+    ) -> PublishLocationResult:
+        """Publish to a single target"""
+        result = PublishLocationResult(
+            target_name=target.name,
+            status=OperationStatus.IN_PROGRESS
         )
 
-    async def _save_and_upload_release(self,
-                                       release_manifest: ReleaseManifest,
-                                       options: Dict[str, Any]) -> Path:
-        """Save and upload release manifest"""
-        # Save locally
-        release_path = self.path_resolver.get_release_path(
-            release_manifest.release['version']
+        try:
+            # Get storage backend
+            storage = self.storage_manager.get_storage(target.name)
+
+            # Determine destination path
+            dest_path = self._get_destination_path(manifest, target)
+
+            # Upload/copy file
+            if target.storage_type == StorageType.FILESYSTEM:
+                # For filesystem, just copy
+                dest_file = Path(dest_path)
+                dest_file.parent.mkdir(parents=True, exist_ok=True)
+
+                console.print(f"Copying to {target.name}: {dest_file}")
+                shutil.copy2(package_path, dest_file)
+
+                result.location_info = {
+                    "type": "filesystem",
+                    "path": str(dest_file)
+                }
+                result.message = f"Copied to: {dest_file}"
+
+            else:
+                # For remote storage, upload
+                console.print(f"{EMOJI_CLOUD} Uploading to {target.name}...")
+
+                upload_result = await storage.upload(
+                    str(package_path),
+                    dest_path
+                )
+
+                result.location_info = {
+                    "type": target.type,
+                    "endpoint": getattr(target, f"{target.type}_endpoint", None),
+                    "bucket": getattr(target, f"{target.type}_bucket", None),
+                    "object_key": dest_path
+                }
+                result.message = f"Uploaded to: {target.get_display_info()}"
+
+            result.transfer_size = get_file_size(package_path)
+            result.status = OperationStatus.SUCCESS
+
+        except Exception as e:
+            result.status = OperationStatus.FAILED
+            result.message = f"Failed to publish to {target.name}"
+            result.error = ErrorDetail(
+                code=ErrorCode.STORAGE_CONNECTION_FAILED,
+                message=str(e),
+                context={"target": target.name, "type": target.type}
+            )
+
+        return result
+
+    def _get_destination_path(self, manifest: Manifest, target: PublishTarget) -> str:
+        """Get destination path for the target"""
+        filename = f"{manifest.component_type}-{manifest.component_version}.tar.gz"
+
+        if target.storage_type == StorageType.FILESYSTEM:
+            # For filesystem, use full path
+            base_path = Path(target.path)
+            return str(base_path / manifest.component_type / manifest.component_version / filename)
+        else:
+            # For object storage, use key format
+            return f"{manifest.component_type}/{manifest.component_version}/{filename}"
+
+    def _create_location_info(
+        self,
+        target: PublishTarget,
+        result: PublishLocationResult
+    ) -> LocationInfo:
+        """Create LocationInfo from publish result"""
+        info = LocationInfo(
+            name=target.name,
+            type=target.type,
+            status="success" if result.status == OperationStatus.SUCCESS else "failed",
+            uploaded_at=datetime.utcnow()
+>>>>>>> Stashed changes
         )
 
-        release_path.parent.mkdir(parents=True, exist_ok=True)
+        if result.location_info:
+            if "path" in result.location_info:
+                info.path = result.location_info["path"]
+            if "endpoint" in result.location_info:
+                info.endpoint = result.location_info["endpoint"]
+            if "bucket" in result.location_info:
+                info.bucket = result.location_info["bucket"]
+            if "object_key" in result.location_info:
+                info.object_key = result.location_info["object_key"]
 
-        import json
-        with open(release_path, 'w') as f:
-            json.dump(release_manifest.to_dict(), f, indent=2, ensure_ascii=False)
+        if result.error:
+            info.error = result.error.message
 
-        # Upload to storage
-        await self.storage_manager.upload_release(
-            release_path,
-            release_manifest.release['version']
-        )
+        return info
 
-        return release_path
+    def _show_publish_guidance(self, result: PublishResult, targets: List[PublishTarget]):
+        """Show guidance based on storage types"""
+        # Separate filesystem and remote targets
+        fs_results = result.get_filesystem_targets()
+        remote_results = [r for r in result.target_results
+                         if r.target_name not in [f.target_name for f in fs_results]]
 
-    def _provide_git_advice(self,
-                            release_version: str,
-                            components: List[ComponentPublishResult]) -> None:
-        """Provide Git operation advice"""
-        manifest_paths = [
-            Path(c.component.manifest_path)
-            for c in components
-            if c.success
-        ]
+        if fs_results:
+            console.print("\n📁 [bold]Filesystem Targets[/bold]")
+            console.print("The following files need to be manually transferred:")
 
-        self.git_advisor.provide_post_publish_advice(
-            release_version,
-            manifest_paths
-        )
+            for fs_result in fs_results:
+                if fs_result.status == OperationStatus.SUCCESS:
+                    console.print(f"\n  {EMOJI_SERVER} {fs_result.target_name}:")
+                    console.print(f"    Local path: {fs_result.location_info['path']}")
 
-    def _get_publisher_info(self) -> Dict[str, str]:
-        """Get publisher information"""
-        import os
-        import socket
+                    # Find target config
+                    target = next((t for t in targets if t.name == fs_result.target_name), None)
+                    if target:
+                        console.print(f"    Suggested remote path: {target.path}")
+                        console.print(f"    Transfer command example:")
+                        console.print(f"      rsync -avz {fs_result.location_info['path']} server:{target.path}/")
 
-        return {
-            'user': os.environ.get('USER', 'unknown'),
-            'host': socket.gethostname(),
-            'timestamp': datetime.now().isoformat(),
-        }
+        if remote_results:
+            console.print(f"\n{EMOJI_CLOUD} [bold]Remote Storage Targets[/bold]")
+            console.print("The following uploads completed automatically:")
+
+            for remote_result in remote_results:
+                if remote_result.status == OperationStatus.SUCCESS:
+                    console.print(f"\n  {EMOJI_SUCCESS} {remote_result.target_name}: {remote_result.message}")
+
+    async def list_published_versions(
+        self,
+        component_type: str
+    ) -> Dict[str, List[str]]:
+        """List published versions for a component
+
+        Args:
+            component_type: Type of component
+
+        Returns:
+            Dict mapping version to list of published locations
+        """
+        versions = {}
+
+        # Load all manifests for the component
+        manifests = await self.manifest_engine.list_manifests(component_type)
+
+        for version, manifest in manifests.items():
+            locations = []
+            for loc in manifest.get_successful_locations():
+                locations.append(f"{loc.name} ({loc.type})")
+
+            if locations:
+                versions[version] = locations
+
+        return versions

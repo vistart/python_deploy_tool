@@ -1,40 +1,73 @@
-"""File operation utilities"""
+"""File utility functions"""
 
+<<<<<<< Updated upstream
 import fnmatch
 import hashlib
+=======
+>>>>>>> Stashed changes
 import os
+import hashlib
 import shutil
+<<<<<<< Updated upstream
 import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Union, Dict, Callable, Any
 
 from ..constants import DEFAULT_EXCLUDE_PATTERNS
+=======
+import tarfile
+import tempfile
+from pathlib import Path
+from typing import Optional, List, Callable, Union
+import fnmatch
+
+from ..constants import DEFAULT_CHUNK_SIZE
+>>>>>>> Stashed changes
 
 
-def calculate_file_checksum(file_path: Path,
-                            algorithm: str = "sha256",
-                            chunk_size: int = 8192) -> str:
-    """
-    Calculate file checksum
+def calculate_file_checksum(
+    file_path: Union[str, Path],
+    algorithm: str = "sha256",
+    chunk_size: int = DEFAULT_CHUNK_SIZE
+) -> str:
+    """Calculate checksum of a file
 
     Args:
         file_path: Path to file
-        algorithm: Hash algorithm (sha256, md5, sha1)
-        chunk_size: Read chunk size
+        algorithm: Hash algorithm (sha256, sha1, md5)
+        chunk_size: Size of chunks to read
 
     Returns:
-        Hex digest string
+        Hexadecimal checksum string
     """
-    hash_func = hashlib.new(algorithm)
+    file_path = Path(file_path)
 
+    if not file_path.exists():
+        raise FileNotFoundError(f"File not found: {file_path}")
+
+    # Get hash function
+    if algorithm == "sha256":
+        hasher = hashlib.sha256()
+    elif algorithm == "sha1":
+        hasher = hashlib.sha1()
+    elif algorithm == "md5":
+        hasher = hashlib.md5()
+    else:
+        raise ValueError(f"Unsupported algorithm: {algorithm}")
+
+    # Calculate hash
     with open(file_path, 'rb') as f:
-        while chunk := f.read(chunk_size):
-            hash_func.update(chunk)
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            hasher.update(chunk)
 
-    return hash_func.hexdigest()
+    return hasher.hexdigest()
 
 
+<<<<<<< Updated upstream
 def calculate_file_hash(file_path: Path,
                         algorithm: str = "sha256",
                         chunk_size: int = 8192) -> str:
@@ -60,34 +93,400 @@ def calculate_file_hash(file_path: Path,
 def get_file_size(file_path: Path) -> int:
     """
     Get file size in bytes
+=======
+def get_file_size(file_path: Union[str, Path]) -> int:
+    """Get file size in bytes
+>>>>>>> Stashed changes
 
     Args:
         file_path: Path to file
 
     Returns:
-        Size in bytes
+        File size in bytes
     """
+    file_path = Path(file_path)
+
+    if not file_path.exists():
+        raise FileNotFoundError(f"File not found: {file_path}")
+
     return file_path.stat().st_size
 
 
-def format_size(size: int) -> str:
-    """
-    Format file size in human-readable format
+def ensure_directory(dir_path: Union[str, Path]) -> Path:
+    """Ensure directory exists, create if necessary
 
     Args:
-        size: Size in bytes
+        dir_path: Directory path
+
+    Returns:
+        Path object for the directory
+    """
+    dir_path = Path(dir_path)
+    dir_path.mkdir(parents=True, exist_ok=True)
+    return dir_path
+
+
+def safe_remove(path: Union[str, Path]) -> bool:
+    """Safely remove file or directory
+
+    Args:
+        path: Path to remove
+
+    Returns:
+        True if removed, False if didn't exist
+    """
+    path = Path(path)
+
+    if not path.exists():
+        return False
+
+    if path.is_file():
+        path.unlink()
+    elif path.is_dir():
+        shutil.rmtree(path)
+
+    return True
+
+
+def copy_with_progress(
+    src: Union[str, Path],
+    dst: Union[str, Path],
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+    chunk_size: int = DEFAULT_CHUNK_SIZE
+) -> None:
+    """Copy file with progress callback
+
+    Args:
+        src: Source file path
+        dst: Destination file path
+        progress_callback: Callback function(bytes_copied, total_bytes)
+        chunk_size: Size of chunks to copy
+    """
+    src = Path(src)
+    dst = Path(dst)
+
+    if not src.exists():
+        raise FileNotFoundError(f"Source file not found: {src}")
+
+    # Ensure destination directory exists
+    dst.parent.mkdir(parents=True, exist_ok=True)
+
+    total_size = get_file_size(src)
+    bytes_copied = 0
+
+    with open(src, 'rb') as fsrc:
+        with open(dst, 'wb') as fdst:
+            while True:
+                chunk = fsrc.read(chunk_size)
+                if not chunk:
+                    break
+
+                fdst.write(chunk)
+                bytes_copied += len(chunk)
+
+                if progress_callback:
+                    progress_callback(bytes_copied, total_size)
+
+    # Copy file permissions
+    shutil.copystat(src, dst)
+
+
+def create_archive(
+    source_dir: Union[str, Path],
+    output_file: Union[str, Path],
+    compression: str = "gz",
+    exclude_patterns: Optional[List[str]] = None,
+    progress_callback: Optional[Callable[[str], None]] = None
+) -> None:
+    """Create tar archive from directory
+
+    Args:
+        source_dir: Source directory to archive
+        output_file: Output archive file path
+        compression: Compression type (gz, bz2, xz, or empty string)
+        exclude_patterns: List of patterns to exclude
+        progress_callback: Callback function(current_file)
+    """
+    source_dir = Path(source_dir)
+    output_file = Path(output_file)
+
+    if not source_dir.exists():
+        raise FileNotFoundError(f"Source directory not found: {source_dir}")
+
+    # Ensure output directory exists
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+
+    # Determine mode
+    mode_map = {
+        "gz": "w:gz",
+        "bz2": "w:bz2",
+        "xz": "w:xz",
+        "": "w"
+    }
+    mode = mode_map.get(compression, "w:gz")
+
+    # Create exclude filter
+    def exclude_filter(tarinfo):
+        if exclude_patterns:
+            for pattern in exclude_patterns:
+                if fnmatch.fnmatch(tarinfo.name, pattern):
+                    return None
+
+        if progress_callback:
+            progress_callback(tarinfo.name)
+
+        return tarinfo
+
+    # Create archive
+    with tarfile.open(output_file, mode) as tar:
+        tar.add(source_dir, arcname=".", filter=exclude_filter)
+
+
+def extract_archive(
+    archive_file: Union[str, Path],
+    output_dir: Union[str, Path],
+    progress_callback: Optional[Callable[[str], None]] = None
+) -> None:
+    """Extract tar archive to directory
+
+    Args:
+        archive_file: Archive file path
+        output_dir: Output directory
+        progress_callback: Callback function(current_file)
+    """
+    archive_file = Path(archive_file)
+    output_dir = Path(output_dir)
+
+    if not archive_file.exists():
+        raise FileNotFoundError(f"Archive file not found: {archive_file}")
+
+    # Ensure output directory exists
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Extract archive
+    with tarfile.open(archive_file, 'r:*') as tar:
+        for member in tar:
+            if progress_callback:
+                progress_callback(member.name)
+
+            tar.extract(member, output_dir)
+
+
+def find_files(
+    root_dir: Union[str, Path],
+    pattern: str = "*",
+    recursive: bool = True,
+    include_dirs: bool = False
+) -> List[Path]:
+    """Find files matching pattern
+
+    Args:
+        root_dir: Root directory to search
+        pattern: File pattern (glob)
+        recursive: Search recursively
+        include_dirs: Include directories in results
+
+    Returns:
+        List of matching paths
+    """
+    root_dir = Path(root_dir)
+
+    if not root_dir.exists():
+        return []
+
+    matches = []
+
+    if recursive:
+        for path in root_dir.rglob(pattern):
+            if include_dirs or path.is_file():
+                matches.append(path)
+    else:
+        for path in root_dir.glob(pattern):
+            if include_dirs or path.is_file():
+                matches.append(path)
+
+    return sorted(matches)
+
+
+def get_relative_paths(
+    paths: List[Union[str, Path]],
+    base_dir: Union[str, Path]
+) -> List[Path]:
+    """Get relative paths from base directory
+
+    Args:
+        paths: List of paths
+        base_dir: Base directory
+
+    Returns:
+        List of relative paths
+    """
+    base_dir = Path(base_dir).resolve()
+    relative_paths = []
+
+    for path in paths:
+        path = Path(path).resolve()
+        try:
+            rel_path = path.relative_to(base_dir)
+            relative_paths.append(rel_path)
+        except ValueError:
+            # Path is not relative to base_dir
+            relative_paths.append(path)
+
+    return relative_paths
+
+
+def create_temp_directory(
+    prefix: str = "deploy_tool_",
+    cleanup: bool = True
+) -> tempfile.TemporaryDirectory:
+    """Create a temporary directory
+
+    Args:
+        prefix: Directory name prefix
+        cleanup: Whether to cleanup on exit
+
+    Returns:
+        TemporaryDirectory context manager
+    """
+    return tempfile.TemporaryDirectory(prefix=prefix, delete=cleanup)
+
+
+def atomic_write(
+    file_path: Union[str, Path],
+    content: Union[str, bytes],
+    mode: str = 'w',
+    encoding: str = 'utf-8'
+) -> None:
+    """Write file atomically (write to temp, then rename)
+
+    Args:
+        file_path: Target file path
+        content: Content to write
+        mode: File mode
+        encoding: Text encoding (for text mode)
+    """
+    file_path = Path(file_path)
+
+    # Ensure directory exists
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Write to temporary file
+    temp_fd, temp_path = tempfile.mkstemp(
+        dir=file_path.parent,
+        prefix=f".{file_path.name}.",
+        suffix=".tmp"
+    )
+
+    try:
+        with os.fdopen(temp_fd, mode, encoding=encoding if 'b' not in mode else None) as f:
+            f.write(content)
+
+        # Atomic rename
+        Path(temp_path).replace(file_path)
+
+    except Exception:
+        # Clean up temp file on error
+        try:
+            os.unlink(temp_path)
+        except:
+            pass
+        raise
+
+
+def read_file_lines(
+    file_path: Union[str, Path],
+    strip: bool = True,
+    skip_empty: bool = True,
+    skip_comments: bool = True,
+    comment_char: str = '#'
+) -> List[str]:
+    """Read file lines with filtering
+
+    Args:
+        file_path: File path
+        strip: Strip whitespace from lines
+        skip_empty: Skip empty lines
+        skip_comments: Skip comment lines
+        comment_char: Comment character
+
+    Returns:
+        List of processed lines
+    """
+    file_path = Path(file_path)
+
+    if not file_path.exists():
+        return []
+
+    lines = []
+
+    with open(file_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            if strip:
+                line = line.strip()
+
+            if skip_empty and not line:
+                continue
+
+            if skip_comments and line.startswith(comment_char):
+                continue
+
+            lines.append(line)
+
+    return lines
+
+
+def get_directory_size(
+    dir_path: Union[str, Path],
+    follow_symlinks: bool = False
+) -> int:
+    """Get total size of directory contents
+
+    Args:
+        dir_path: Directory path
+        follow_symlinks: Whether to follow symbolic links
+
+    Returns:
+        Total size in bytes
+    """
+    dir_path = Path(dir_path)
+
+    if not dir_path.exists():
+        return 0
+
+    total_size = 0
+
+    for path in dir_path.rglob('*'):
+        if path.is_file(follow_symlinks=follow_symlinks):
+            total_size += path.stat(follow_symlinks=follow_symlinks).st_size
+
+    return total_size
+
+
+def format_size(size_bytes: int) -> str:
+    """Format file size for human readability
+
+    Args:
+        size_bytes: Size in bytes
 
     Returns:
         Formatted size string
     """
     for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+<<<<<<< Updated upstream
         if size < 1024.0:
             if unit == 'B':
                 return f"{size} {unit}"
             return f"{size:.1f} {unit}"
         size /= 1024.0
     return f"{size:.1f} PB"
+=======
+        if size_bytes < 1024.0:
+            return f"{size_bytes:.1f} {unit}"
+        size_bytes /= 1024.0
+>>>>>>> Stashed changes
 
+    return f"{size_bytes:.1f} PB"
 
 def format_bytes(size: int) -> str:
     """
@@ -130,7 +529,6 @@ def is_binary_file(file_path: Path) -> bool:
             return len(non_text) > len(chunk) * 0.3
     except:
         return True
-
 
 def count_files(directory: Path,
                 pattern: str = "*",
@@ -187,6 +585,7 @@ def scan_directory(directory: Path,
 
             files.append(path)
 
+<<<<<<< Updated upstream
     return sorted(files)
 
 
@@ -726,3 +1125,6 @@ def get_file_metadata(file_path: Path) -> Optional[Dict[str, Any]]:
             'exists': file_path.exists(),
             'error': str(e)
         }
+=======
+    return sorted(files)
+>>>>>>> Stashed changes

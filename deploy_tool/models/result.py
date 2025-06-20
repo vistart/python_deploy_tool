@@ -1,3 +1,4 @@
+<<<<<<< Updated upstream
 """Result models for operations"""
 
 from dataclasses import dataclass, field
@@ -18,8 +19,130 @@ class PackResult:
     config_path: Optional[str] = None
     error: Optional[str] = None
     duration: float = 0.0
+=======
+"""Operation result models"""
+
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Dict, List, Optional, Any, Union
+from enum import Enum
+from pathlib import Path
+
+
+class OperationStatus(Enum):
+    """Operation status"""
+    SUCCESS = "success"
+    FAILED = "failed"
+    PARTIAL = "partial"
+    SKIPPED = "skipped"
+    IN_PROGRESS = "in_progress"
+
+
+@dataclass
+class ErrorDetail:
+    """Detailed error information"""
+
+    code: str
+    message: str
+    context: Dict[str, Any] = field(default_factory=dict)
+    timestamp: datetime = field(default_factory=datetime.utcnow)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary"""
+        return {
+            "code": self.code,
+            "message": self.message,
+            "context": self.context,
+            "timestamp": self.timestamp.isoformat()
+        }
+
+
+@dataclass
+class Result:
+    """Base result class"""
+
+    status: OperationStatus
+    message: str = ""
+    errors: List[ErrorDetail] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+>>>>>>> Stashed changes
     metadata: Dict[str, Any] = field(default_factory=dict)
-    git_suggestions: List[str] = field(default_factory=list)
+    start_time: datetime = field(default_factory=datetime.utcnow)
+    end_time: Optional[datetime] = None
+
+    @property
+    def is_success(self) -> bool:
+        """Check if operation was successful"""
+        return self.status == OperationStatus.SUCCESS
+
+    @property
+    def is_failed(self) -> bool:
+        """Check if operation failed"""
+        return self.status == OperationStatus.FAILED
+
+    @property
+    def duration(self) -> Optional[float]:
+        """Get operation duration in seconds"""
+        if self.end_time:
+            return (self.end_time - self.start_time).total_seconds()
+        return None
+
+    def add_error(self, code: str, message: str, **context) -> None:
+        """Add an error"""
+        self.errors.append(ErrorDetail(code=code, message=message, context=context))
+
+    def add_warning(self, message: str) -> None:
+        """Add a warning"""
+        self.warnings.append(message)
+
+    def complete(self, status: Optional[OperationStatus] = None) -> None:
+        """Mark operation as complete"""
+        self.end_time = datetime.utcnow()
+        if status:
+            self.status = status
+
+
+@dataclass
+class PackResult(Result):
+    """Result of pack operation"""
+
+    component_type: Optional[str] = None
+    component_version: Optional[str] = None
+    package_path: Optional[Path] = None
+    package_size: Optional[int] = None
+    manifest_path: Optional[Path] = None
+    compression_algorithm: Optional[str] = None
+    checksum: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary"""
+        return {
+            "status": self.status.value,
+            "message": self.message,
+            "component_type": self.component_type,
+            "component_version": self.component_version,
+            "package_path": str(self.package_path) if self.package_path else None,
+            "package_size": self.package_size,
+            "manifest_path": str(self.manifest_path) if self.manifest_path else None,
+            "compression_algorithm": self.compression_algorithm,
+            "checksum": self.checksum,
+            "errors": [e.to_dict() for e in self.errors],
+            "warnings": self.warnings,
+            "duration": self.duration
+        }
+
+
+@dataclass
+class PublishLocationResult:
+    """Result for a single publish location"""
+
+    target_name: str
+    status: OperationStatus
+    message: str = ""
+    location_info: Optional[Dict[str, Any]] = None
+    error: Optional[ErrorDetail] = None
+    transfer_size: Optional[int] = None
+    transfer_duration: Optional[float] = None
 
     @property
     def archive_size(self) -> Optional[int]:
@@ -31,6 +154,7 @@ class PackResult:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         data = {
+<<<<<<< Updated upstream
             'success': self.success,
             'package_type': self.package_type,
             'version': self.version,
@@ -49,11 +173,27 @@ class PackResult:
             data['metadata'] = self.metadata
         if self.git_suggestions:
             data['git_suggestions'] = self.git_suggestions
+=======
+            "target_name": self.target_name,
+            "status": self.status.value,
+            "message": self.message
+        }
+
+        if self.location_info:
+            data["location_info"] = self.location_info
+        if self.error:
+            data["error"] = self.error.to_dict()
+        if self.transfer_size:
+            data["transfer_size"] = self.transfer_size
+        if self.transfer_duration:
+            data["transfer_duration"] = self.transfer_duration
+>>>>>>> Stashed changes
 
         return data
 
 
 @dataclass
+<<<<<<< Updated upstream
 class ComponentPublishResult:
     """Single component publish result"""
     component: PublishComponent
@@ -285,3 +425,134 @@ class StatusResult:
             data['error'] = self.error
 
         return data
+=======
+class PublishResult(Result):
+    """Result of publish operation"""
+
+    component_type: Optional[str] = None
+    component_version: Optional[str] = None
+    target_results: List[PublishLocationResult] = field(default_factory=list)
+    manifest_updated: bool = False
+
+    @property
+    def successful_targets(self) -> List[str]:
+        """Get list of successful target names"""
+        return [r.target_name for r in self.target_results if r.status == OperationStatus.SUCCESS]
+
+    @property
+    def failed_targets(self) -> List[str]:
+        """Get list of failed target names"""
+        return [r.target_name for r in self.target_results if r.status == OperationStatus.FAILED]
+
+    def add_target_result(self, result: PublishLocationResult) -> None:
+        """Add a target result"""
+        self.target_results.append(result)
+
+        # Update overall status
+        if all(r.status == OperationStatus.SUCCESS for r in self.target_results):
+            self.status = OperationStatus.SUCCESS
+        elif any(r.status == OperationStatus.SUCCESS for r in self.target_results):
+            self.status = OperationStatus.PARTIAL
+        else:
+            self.status = OperationStatus.FAILED
+
+    def get_filesystem_targets(self) -> List[PublishLocationResult]:
+        """Get results for filesystem targets that need manual transfer"""
+        fs_results = []
+        for result in self.target_results:
+            if result.location_info and result.location_info.get("type") == "filesystem":
+                fs_results.append(result)
+        return fs_results
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary"""
+        return {
+            "status": self.status.value,
+            "message": self.message,
+            "component_type": self.component_type,
+            "component_version": self.component_version,
+            "target_results": [r.to_dict() for r in self.target_results],
+            "manifest_updated": self.manifest_updated,
+            "successful_targets": self.successful_targets,
+            "failed_targets": self.failed_targets,
+            "errors": [e.to_dict() for e in self.errors],
+            "warnings": self.warnings,
+            "duration": self.duration
+        }
+
+
+@dataclass
+class DeployResult(Result):
+    """Result of deploy operation"""
+
+    component_type: Optional[str] = None
+    component_version: Optional[str] = None
+    deploy_path: Optional[Path] = None
+    source_used: Optional[str] = None
+    sources_tried: List[str] = field(default_factory=list)
+    version_switched: bool = False
+    previous_version: Optional[str] = None
+    links_updated: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary"""
+        return {
+            "status": self.status.value,
+            "message": self.message,
+            "component_type": self.component_type,
+            "component_version": self.component_version,
+            "deploy_path": str(self.deploy_path) if self.deploy_path else None,
+            "source_used": self.source_used,
+            "sources_tried": self.sources_tried,
+            "version_switched": self.version_switched,
+            "previous_version": self.previous_version,
+            "links_updated": self.links_updated,
+            "errors": [e.to_dict() for e in self.errors],
+            "warnings": self.warnings,
+            "duration": self.duration
+        }
+
+
+@dataclass
+class BatchResult(Result):
+    """Result of batch operations"""
+
+    operation_type: str = ""  # pack, publish, deploy
+    total_operations: int = 0
+    successful_operations: int = 0
+    failed_operations: int = 0
+    results: List[Union[PackResult, PublishResult, DeployResult]] = field(default_factory=list)
+
+    def add_result(self, result: Union[PackResult, PublishResult, DeployResult]) -> None:
+        """Add an operation result"""
+        self.results.append(result)
+        self.total_operations += 1
+
+        if result.is_success:
+            self.successful_operations += 1
+        else:
+            self.failed_operations += 1
+
+        # Update overall status
+        if self.failed_operations == 0:
+            self.status = OperationStatus.SUCCESS
+        elif self.successful_operations > 0:
+            self.status = OperationStatus.PARTIAL
+        else:
+            self.status = OperationStatus.FAILED
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary"""
+        return {
+            "status": self.status.value,
+            "message": self.message,
+            "operation_type": self.operation_type,
+            "total_operations": self.total_operations,
+            "successful_operations": self.successful_operations,
+            "failed_operations": self.failed_operations,
+            "results": [r.to_dict() for r in self.results],
+            "errors": [e.to_dict() for e in self.errors],
+            "warnings": self.warnings,
+            "duration": self.duration
+        }
+>>>>>>> Stashed changes

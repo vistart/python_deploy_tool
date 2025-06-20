@@ -1,6 +1,6 @@
 """Core functionality for deploy-tool"""
 
-from .path_resolver import PathResolver, PathType
+from .path_resolver import PathResolver
 from .project_manager import ProjectManager, ProjectConfig
 from .manifest_engine import ManifestEngine
 from .storage_manager import StorageManager
@@ -11,7 +11,6 @@ from .git_advisor import GitAdvisor
 
 __all__ = [
     "PathResolver",
-    "PathType",
     "ProjectManager",
     "ProjectConfig",
     "ManifestEngine",

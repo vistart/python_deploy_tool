@@ -1,431 +1,283 @@
 """Package service implementation"""
 
-import time
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
-from dataclasses import dataclass, field
 
-from ..api.exceptions import (
-    PackError,
-    ValidationError,
-    FileExistsError,
+from ..constants import (
+    DEFAULT_COMPRESSION_ALGORITHM,
+    DEFAULT_COMPRESSION_LEVEL,
+    DEFAULT_EXCLUDE_PATTERNS,
+    ARCHIVE_FILE_PATTERNS,
+    ErrorCode
 )
-from ..core import (
-    PathResolver,
-    ManifestEngine,
-    ValidationEngine,
-    ConfigGenerator,
-    GitAdvisor,
+from ..core.path_resolver import PathResolver
+from ..models import (
+    PackResult,
+    OperationStatus,
+    Manifest,
+    PackageInfo,
+    ChecksumInfo
 )
-from ..core.compression import TarProcessor, CompressionType
-from ..models import PackResult, PackageConfig, SourceConfig, CompressionConfig, OutputConfig
+from ..utils.file_utils import (
+    calculate_file_checksum,
+    get_file_size,
+    ensure_directory,
+    create_archive
+)
 
 
 @dataclass
-class FullConfig:
-    """Full package configuration combining all config components"""
-    package: PackageConfig
-    source: SourceConfig
-    compression: CompressionConfig = field(default_factory=CompressionConfig)
-    output: OutputConfig = field(default_factory=OutputConfig)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+class PackageConfig:
+    """Configuration for packaging operation"""
+    type: str
+    version: str
+    source_path: Path
+    output_path: Path
+    compression_algorithm: str = DEFAULT_COMPRESSION_ALGORITHM
+    compression_level: int = DEFAULT_COMPRESSION_LEVEL
+    exclude_patterns: List[str] = None
+    metadata: Dict[str, Any] = None
 
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'FullConfig':
-        """Create from dictionary"""
-        return cls(
-            package=PackageConfig.from_dict(data['package']),
-            source=SourceConfig.from_dict(data['source']),
-            compression=CompressionConfig.from_dict(data.get('compression', {})),
-            output=OutputConfig.from_dict(data.get('output', {})),
-            metadata=data.get('metadata', {})
-        )
+    def __post_init__(self):
+        """Post-initialization processing"""
+        if self.exclude_patterns is None:
+            self.exclude_patterns = DEFAULT_EXCLUDE_PATTERNS.copy()
+        if self.metadata is None:
+            self.metadata = {}
 
 
 class PackageService:
-    """Packaging service implementation"""
+    """Service for packaging components"""
 
-    def __init__(self,
-                 path_resolver: PathResolver,
-                 manifest_engine: ManifestEngine,
-                 config_generator: ConfigGenerator,
-                 validation_engine: ValidationEngine):
-        """
-        Initialize package service
+    def __init__(self, path_resolver: PathResolver):
+        """Initialize package service
 
         Args:
             path_resolver: Path resolver instance
-            manifest_engine: Manifest engine instance
-            config_generator: Config generator instance
-            validation_engine: Validation engine instance
         """
         self.path_resolver = path_resolver
-        self.manifest_engine = manifest_engine
-        self.config_generator = config_generator
-        self.validation_engine = validation_engine
-        self.git_advisor = GitAdvisor(path_resolver)
 
-    async def pack(self,
-                   source_path: str,
-                   package_type: str,
-                   version: str,
-                   options: Optional[Dict[str, Any]] = None) -> PackResult:
-        """
-        Execute packaging workflow
+    async def package_component(
+        self,
+        config: PackageConfig,
+        progress_callback: Optional[callable] = None
+    ) -> PackResult:
+        """Package a component
 
         Args:
-            source_path: Source path (should be relative)
-            package_type: Package type
-            version: Version string
-            options: Additional options
+            config: Package configuration
+            progress_callback: Optional progress callback
 
         Returns:
-            PackResult: Packaging result
+            PackResult with status and details
         """
-        start_time = time.time()
-        options = options or {}
+        result = PackResult(
+            status=OperationStatus.IN_PROGRESS,
+            component_type=config.type,
+            component_version=config.version
+        )
 
         try:
-            # 1. Validate inputs
-            await self._validate_inputs(source_path, package_type, version)
-
-            # 2. Convert to relative path if absolute
-            source_path = self._ensure_relative_path(source_path)
-
-            # 3. Resolve path for actual file operations
-            source = self.path_resolver.resolve(source_path)
-
-            # 4. Generate or load configuration
-            if options.get('config_path'):
-                config = self._load_config(options['config_path'])
-            else:
-                config = await self._generate_config(source, package_type, version, options)
-
-            # 5. Scan files (record relative paths)
-            files_info = await self._scan_files(source, config)
-
-            # 6. Execute compression
-            archive_path = await self._compress_files(source, config, files_info, options)
-
-            # 7. Generate manifest (with relative paths)
-            manifest = self._create_manifest(
-                config, source_path, archive_path, files_info, options
-            )
-
-            # 8. Save manifest
-            manifest_path = self.manifest_engine.save_manifest(manifest)
-
-            # 9. Create result (with relative paths for display)
-            result = PackResult(
-                success=True,
-                package_type=package_type,
-                version=version,
-                manifest_path=str(self.path_resolver.get_relative_to_root(manifest_path)),
-                archive_path=str(self.path_resolver.get_relative_to_root(archive_path)),
-                duration=time.time() - start_time,
-                metadata={
-                    'file_count': len(files_info),
-                    'total_size': sum(f['size'] for f in files_info),
-                    'compression': config.compression.algorithm,
-                }
-            )
-
-            # 10. Provide Git suggestions
-            if options.get('show_git_suggestions', True):
-                self.git_advisor.provide_post_pack_advice(
-                    manifest_path,
-                    Path(config.get('source_config_path')) if 'source_config_path' in config else None
+            # Validate source exists
+            if not config.source_path.exists():
+                result.add_error(
+                    ErrorCode.SOURCE_NOT_FOUND,
+                    f"Source directory not found: {config.source_path}"
                 )
+                result.complete(OperationStatus.FAILED)
+                return result
 
-            return result
+            # Ensure output directory exists
+            ensure_directory(config.output_path.parent)
+
+            # Determine archive filename
+            ext = self._get_compression_extension(config.compression_algorithm)
+            filename_pattern = ARCHIVE_FILE_PATTERNS.get(ext, ARCHIVE_FILE_PATTERNS["gz"])
+            filename = filename_pattern.format(
+                component=config.type,
+                version=config.version,
+                ext=ext
+            )
+
+            package_path = config.output_path.parent / filename
+
+            # Create archive
+            await self._create_archive(
+                source_dir=config.source_path,
+                output_file=package_path,
+                compression=config.compression_algorithm,
+                compression_level=config.compression_level,
+                exclude_patterns=config.exclude_patterns,
+                progress_callback=progress_callback
+            )
+
+            # Calculate checksum
+            checksum = calculate_file_checksum(package_path)
+            file_size = get_file_size(package_path)
+
+            # Set result
+            result.package_path = package_path
+            result.package_size = file_size
+            result.compression_algorithm = config.compression_algorithm
+            result.checksum = checksum
+
+            # Create manifest
+            manifest_path = await self._create_manifest(
+                config=config,
+                package_path=package_path,
+                checksum=checksum,
+                file_size=file_size
+            )
+            result.manifest_path = manifest_path
+
+            result.message = f"Successfully packaged {config.type}:{config.version}"
+            result.complete(OperationStatus.SUCCESS)
 
         except Exception as e:
-            return PackResult(
-                success=False,
-                package_type=package_type,
-                version=version,
-                error=str(e),
-                duration=time.time() - start_time
+            result.add_error(
+                ErrorCode.PACK_FAILED,
+                f"Failed to package component: {str(e)}"
             )
-
-    def _ensure_relative_path(self, path: str) -> str:
-        """Ensure path is relative to project root
-
-        Args:
-            path: Input path (absolute or relative)
-
-        Returns:
-            Relative path string
-        """
-        path_obj = Path(path)
-
-        # If already relative, return as-is
-        if not path_obj.is_absolute():
-            return path
-
-        # Try to make relative to project root
-        try:
-            rel_path = path_obj.relative_to(self.path_resolver.project_root)
-            return str(rel_path)
-        except ValueError:
-            raise PackError(
-                f"Path '{path}' is outside project root. "
-                f"Please use paths within the project for portability."
-            )
-
-    async def auto_pack(self,
-                        source_path: str,
-                        package_type: str,
-                        version: str) -> PackResult:
-        """
-        Auto-generate config and pack
-
-        Args:
-            source_path: Source path
-            package_type: Package type
-            version: Version string
-
-        Returns:
-            PackResult: Packaging result
-        """
-        # Ensure relative path
-        source_path = self._ensure_relative_path(source_path)
-
-        # Generate configuration
-        source = Path(source_path)
-        config_dict, config_path = self.config_generator.generate_config(
-            source,
-            {'type': package_type, 'version': version, 'save_config': True}
-        )
-
-        # Pack with generated config
-        result = await self.pack(
-            source_path,
-            package_type,
-            version,
-            {'config_path': config_path}
-        )
-
-        # Add config path to result
-        if config_path:
-            result.config_path = str(self.path_resolver.get_relative_to_root(config_path))
+            result.complete(OperationStatus.FAILED)
 
         return result
 
-    async def pack_with_config(self, config_path: str) -> PackResult:
-        """
-        Pack using configuration file
+    async def _create_archive(
+        self,
+        source_dir: Path,
+        output_file: Path,
+        compression: str,
+        compression_level: int,
+        exclude_patterns: List[str],
+        progress_callback: Optional[callable] = None
+    ) -> None:
+        """Create compressed archive
 
         Args:
-            config_path: Configuration file path
-
-        Returns:
-            PackResult: Packaging result
+            source_dir: Source directory
+            output_file: Output archive file
+            compression: Compression algorithm
+            compression_level: Compression level
+            exclude_patterns: Patterns to exclude
+            progress_callback: Progress callback
         """
-        # Load and validate config
-        config = self._load_config(config_path)
-
-        # Extract package info
-        package_type = config.package.type
-        version = config.package.version
-        source_path = config.source.path
-
-        # Pack
-        return await self.pack(
-            source_path,
-            package_type,
-            version,
-            {'config_path': config_path}
-        )
-
-    async def _validate_inputs(self,
-                               source_path: str,
-                               package_type: str,
-                               version: str) -> None:
-        """Validate packaging inputs"""
-        # Validate source path
-        source = self.path_resolver.resolve(source_path)
-        path_result = self.validation_engine.validate_path(
-            source, must_exist=True
-        )
-        if not path_result.is_valid:
-            raise ValidationError(path_result.errors[0])
-
-        # Validate package type
-        type_result = self.validation_engine.validate_component_type(package_type)
-        if not type_result.is_valid:
-            raise ValidationError(type_result.errors[0])
-
-        # Validate version
-        version_result = self.validation_engine.validate_version(version)
-        if not version_result.is_valid:
-            raise ValidationError(version_result.errors[0])
-
-    def _load_config(self, config_path: str) -> FullConfig:
-        """Load configuration from file"""
-        config_file = Path(config_path)
-        if not config_file.exists():
-            raise PackError(f"Configuration file not found: {config_path}")
-
-        # Load configuration
-        config_dict = self.config_generator.load_config(config_file)
-
-        # Validate configuration
-        errors = self.config_generator.validate_config(config_dict)
-        if errors:
-            raise ValidationError(f"Invalid configuration: {', '.join(errors)}")
-
-        return FullConfig.from_dict(config_dict)
-
-    async def _generate_config(self,
-                               source: Path,
-                               package_type: str,
-                               version: str,
-                               options: Dict[str, Any]) -> FullConfig:
-        """Generate configuration"""
-        config_dict, _ = self.config_generator.generate_config(
-            source,
-            {
-                'type': package_type,
-                'version': version,
-                'save_config': False,
-                **options
-            }
-        )
-
-        return FullConfig.from_dict(config_dict)
-
-    async def _scan_files(self,
-                          source: Path,
-                          config: FullConfig) -> List[Dict[str, Any]]:
-        """Scan files to package (recording relative paths)"""
-        from ..utils import scan_directory
-
-        files = []
-        project_root = self.path_resolver.project_root
-
-        if source.is_file():
-            # Single file - record relative path from project root
-            rel_path = source.relative_to(project_root)
-            files.append({
-                'path': source,
-                'rel_path': str(rel_path),
-                'size': source.stat().st_size,
-                'is_binary': True,  # Assume binary for safety
-            })
-        else:
-            # Directory - scan and record relative paths
-            scan_results = scan_directory(
-                source,
-                excludes=config.source.excludes,
-                includes=config.source.includes
-            )
-
-            for file_path, info in scan_results:
-                # Record relative path from source directory
-                rel_path = file_path.relative_to(source)
-                files.append({
-                    'path': file_path,
-                    'rel_path': str(rel_path),
-                    'size': info['size'],
-                    'is_binary': info['is_binary'],
-                })
-
-        return files
-
-    async def _compress_files(self,
-                              source: Path,
-                              config: FullConfig,
-                              files_info: List[Dict[str, Any]],
-                              options: Dict[str, Any]) -> Path:
-        """Compress files"""
-        # Determine output path
-        output_dir = self.path_resolver.resolve(config.output.path)
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        # Format output filename
-        output_filename = config.output.format_filename(
-            config.package,
-            config.compression
-        )
-        archive_path = output_dir / output_filename
-
-        # Check if exists
-        if archive_path.exists() and not options.get('force', False):
-            raise FileExistsError(str(archive_path))
-
-        # Get compression type
-        compress_type = self._get_compression_type(config.compression.algorithm)
-
-        # Create tar processor
-        processor = TarProcessor(
-            compression_type=compress_type,
-            manifest_engine=self.manifest_engine
-        )
-
-        # Set compression level
-        processor._processor.compression_level = config.compression.level
-
-        # Pack with progress - use relative paths in archive
-        if source.is_file():
-            sources = [source]
-        else:
-            # For directory, pass the directory itself
-            sources = [source]
-
-        archive_path, _ = await processor.pack_with_manifest(
-            sources,
-            archive_path,
-            metadata=config.metadata,
-            # Ensure relative paths are used in the archive
-            use_relative_paths=True
-        )
-
-        return archive_path
-
-    def _create_manifest(self,
-                         config: FullConfig,
-                         source_path: str,  # Already relative
-                         archive_path: Path,
-                         files_info: List[Dict[str, Any]],
-                         options: Dict[str, Any]) -> Any:
-        """Create manifest with relative paths"""
-        # Convert archive path to relative
-        archive_path_rel = self.path_resolver.get_relative_to_root(archive_path)
-
-        manifest = self.manifest_engine.create_manifest(
-            package_type=config.package.type,
-            package_name=config.package.name or config.package.type,
-            version=config.package.version,
-            source_path=Path(source_path),  # Use the already relative path
-            archive_path=archive_path,
-            metadata={
-                **config.metadata,
-                'file_count': len(files_info),
-                'total_source_size': sum(f['size'] for f in files_info),
-                'source_path': source_path,  # Store original relative path
-                'archive_path': str(archive_path_rel),  # Store relative archive path
-            }
-        )
-
-        return manifest
-
-    def _get_compression_type(self, algorithm: str) -> CompressionType:
-        """Get compression type from algorithm string"""
-        mapping = {
-            'gzip': CompressionType.GZIP,
-            'gz': CompressionType.GZIP,
-            'bzip2': CompressionType.BZIP2,
-            'bz2': CompressionType.BZIP2,
-            'xz': CompressionType.XZ,
-            'lzma': CompressionType.XZ,
-            'lz4': CompressionType.LZ4,
-            'none': CompressionType.NONE,
-            '': CompressionType.NONE,
+        # Map compression names to tar modes
+        compression_map = {
+            "gzip": "gz",
+            "bzip2": "bz2",
+            "xz": "xz",
+            "lz4": "lz4",
+            "none": ""
         }
 
-        algo_lower = algorithm.lower()
-        if algo_lower not in mapping:
-            raise PackError(f"Unsupported compression algorithm: {algorithm}")
+        tar_compression = compression_map.get(compression, "gz")
 
-        return mapping[algo_lower]
+        # Use file_utils create_archive function
+        create_archive(
+            source_dir=source_dir,
+            output_file=output_file,
+            compression=tar_compression,
+            exclude_patterns=exclude_patterns,
+            progress_callback=progress_callback
+        )
+
+    async def _create_manifest(
+        self,
+        config: PackageConfig,
+        package_path: Path,
+        checksum: str,
+        file_size: int
+    ) -> Path:
+        """Create component manifest
+
+        Args:
+            config: Package configuration
+            package_path: Path to package file
+            checksum: Package checksum
+            file_size: Package size
+
+        Returns:
+            Path to manifest file
+        """
+        # Create manifest
+        manifest = Manifest(
+            component_type=config.type,
+            component_version=config.version,
+            created_at=datetime.utcnow(),
+            package=PackageInfo(
+                file=package_path.name,
+                size=file_size,
+                checksum=ChecksumInfo(
+                    algorithm="sha256",
+                    value=checksum
+                ),
+                compression_algorithm=config.compression_algorithm
+            ),
+            metadata=config.metadata
+        )
+
+        # Determine manifest path
+        manifests_dir = self.path_resolver.get_manifests_dir()
+        component_dir = manifests_dir / config.type
+        ensure_directory(component_dir)
+
+        manifest_file = component_dir / f"{config.version}.json"
+
+        # Save manifest
+        import json
+        with open(manifest_file, 'w') as f:
+            json.dump(manifest.to_dict(), f, indent=2)
+
+        return manifest_file
+
+    def _get_compression_extension(self, algorithm: str) -> str:
+        """Get file extension for compression algorithm
+
+        Args:
+            algorithm: Compression algorithm
+
+        Returns:
+            File extension
+        """
+        extension_map = {
+            "gzip": "gz",
+            "bzip2": "bz2",
+            "xz": "xz",
+            "lz4": "lz4",
+            "none": ""
+        }
+        return extension_map.get(algorithm, "gz")
+
+    async def validate_package(
+        self,
+        package_path: Path,
+        expected_checksum: Optional[str] = None
+    ) -> tuple[bool, Optional[str]]:
+        """Validate a package file
+
+        Args:
+            package_path: Path to package file
+            expected_checksum: Expected checksum (if known)
+
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        if not package_path.exists():
+            return False, f"Package file not found: {package_path}"
+
+        try:
+            # Calculate actual checksum
+            actual_checksum = calculate_file_checksum(package_path)
+
+            # Compare if expected checksum provided
+            if expected_checksum and actual_checksum != expected_checksum:
+                return False, f"Checksum mismatch: expected {expected_checksum}, got {actual_checksum}"
+
+            # TODO: Add more validation (e.g., archive integrity)
+
+            return True, None
+
+        except Exception as e:
+            return False, f"Validation failed: {str(e)}"

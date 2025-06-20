@@ -1,19 +1,49 @@
+<<<<<<< Updated upstream
 """Output formatting utilities with improved error handling"""
 
 from pathlib import Path
 from typing import Optional, List, Dict, Any
+=======
+"""Output utilities for CLI"""
+
+import logging
+from contextlib import contextmanager
+>>>>>>> Stashed changes
 
 from rich.console import Console
-from rich.table import Table
-from rich.panel import Panel
-from rich.syntax import Syntax
-from rich import box
+from rich.logging import RichHandler
+from rich.progress import (
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    BarColumn,
+    TaskProgressColumn,
+    TimeRemainingColumn,
+    DownloadColumn,
+    TransferSpeedColumn
+)
+from rich.theme import Theme
 
-from ...models import PackResult, PublishResult, DeployResult
+# Custom theme for consistent styling
+custom_theme = Theme({
+    "info": "cyan",
+    "warning": "yellow",
+    "error": "red",
+    "success": "green",
+    "dim": "bright_black",
+    "highlight": "bold cyan",
+    "path": "blue",
+    "command": "bold yellow",
+})
 
-console = Console()
+# Global console instance
+console = Console(theme=custom_theme, stderr=False)
+
+# Error console (prints to stderr)
+error_console = Console(theme=custom_theme, stderr=True)
 
 
+<<<<<<< Updated upstream
 def format_pack_result(result: PackResult) -> None:
     """Format and display pack operation result"""
     if result.success:
@@ -434,55 +464,259 @@ def format_table(data: List[Dict[str, Any]],
                  columns: List[tuple[str, str]],
                  title: Optional[str] = None) -> Table:
     """Create a formatted table
+=======
+def setup_logging(level: str = "INFO") -> None:
+    """Setup logging with Rich handler
+>>>>>>> Stashed changes
 
     Args:
-        data: List of dictionaries with data
-        columns: List of (key, header) tuples
-        title: Optional table title
+        level: Logging level
+    """
+    logging.basicConfig(
+        level=level,
+        format="%(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        handlers=[
+            RichHandler(
+                console=console,
+                rich_tracebacks=True,
+                tracebacks_show_locals=True,
+                show_time=False,
+                show_path=False,
+            )
+        ]
+    )
+
+
+@contextmanager
+def create_progress(
+    description: str = "Processing...",
+    transient: bool = False,
+    disable: bool = False
+) -> Progress:
+    """Create a progress bar context
+
+    Args:
+        description: Default task description
+        transient: Whether to remove progress when done
+        disable: Whether to disable progress display
+
+    Yields:
+        Progress instance
+    """
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeRemainingColumn(),
+        console=console,
+        transient=transient,
+        disable=disable
+    )
+
+    with progress:
+        yield progress
+
+
+@contextmanager
+def create_download_progress(
+    transient: bool = False,
+    disable: bool = False
+) -> Progress:
+    """Create a download progress bar
+
+    Args:
+        transient: Whether to remove progress when done
+        disable: Whether to disable progress display
+
+    Yields:
+        Progress instance
+    """
+    progress = Progress(
+        TextColumn("[bold blue]{task.fields[filename]}", justify="left"),
+        BarColumn(),
+        "[progress.percentage]{task.percentage:>3.1f}%",
+        "•",
+        DownloadColumn(),
+        "•",
+        TransferSpeedColumn(),
+        "•",
+        TimeRemainingColumn(),
+        console=console,
+        transient=transient,
+        disable=disable
+    )
+
+    with progress:
+        yield progress
+
+
+def print_success(message: str, **kwargs) -> None:
+    """Print a success message
+
+    Args:
+        message: Message to print
+        **kwargs: Additional arguments for console.print
+    """
+    console.print(f"[success]✓[/success] {message}", **kwargs)
+
+
+def print_error(message: str, **kwargs) -> None:
+    """Print an error message
+
+    Args:
+        message: Message to print
+        **kwargs: Additional arguments for console.print
+    """
+    error_console.print(f"[error]✗[/error] {message}", **kwargs)
+
+
+def print_warning(message: str, **kwargs) -> None:
+    """Print a warning message
+
+    Args:
+        message: Message to print
+        **kwargs: Additional arguments for console.print
+    """
+    console.print(f"[warning]⚠[/warning] {message}", **kwargs)
+
+
+def print_info(message: str, **kwargs) -> None:
+    """Print an info message
+
+    Args:
+        message: Message to print
+        **kwargs: Additional arguments for console.print
+    """
+    console.print(f"[info]ℹ[/info] {message}", **kwargs)
+
+
+def print_debug(message: str, **kwargs) -> None:
+    """Print a debug message
+
+    Args:
+        message: Message to print
+        **kwargs: Additional arguments for console.print
+    """
+    console.print(f"[dim]DEBUG:[/dim] {message}", **kwargs)
+
+
+def print_command(command: str, **kwargs) -> None:
+    """Print a command example
+
+    Args:
+        command: Command to print
+        **kwargs: Additional arguments for console.print
+    """
+    console.print(f"  [command]$ {command}[/command]", **kwargs)
+
+
+def print_path(path: str, **kwargs) -> None:
+    """Print a file path
+
+    Args:
+        path: Path to print
+        **kwargs: Additional arguments for console.print
+    """
+    console.print(f"[path]{path}[/path]", **kwargs)
+
+
+def print_section(title: str, **kwargs) -> None:
+    """Print a section header
+
+    Args:
+        title: Section title
+        **kwargs: Additional arguments for console.print
+    """
+    console.print(f"\n[bold]{title}[/bold]", **kwargs)
+
+
+def print_subsection(title: str, **kwargs) -> None:
+    """Print a subsection header
+
+    Args:
+        title: Subsection title
+        **kwargs: Additional arguments for console.print
+    """
+    console.print(f"\n[highlight]{title}[/highlight]", **kwargs)
+
+
+class StatusDisplay:
+    """Context manager for status display"""
+
+    def __init__(self, message: str, spinner: str = "dots"):
+        """Initialize status display
+
+        Args:
+            message: Status message
+            spinner: Spinner type
+        """
+        self.message = message
+        self.spinner = spinner
+        self._status = None
+
+    def __enter__(self):
+        """Enter context"""
+        self._status = console.status(self.message, spinner=self.spinner)
+        self._status.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Exit context"""
+        if self._status:
+            self._status.stop()
+
+    def update(self, message: str) -> None:
+        """Update status message
+
+        Args:
+            message: New status message
+        """
+        if self._status:
+            self._status.update(message)
+
+
+def create_status(message: str, spinner: str = "dots") -> StatusDisplay:
+    """Create a status display context
+
+    Args:
+        message: Status message
+        spinner: Spinner type
 
     Returns:
-        Rich Table object
+        StatusDisplay context manager
     """
-    table = Table(title=title, box=box.ROUNDED)
-
-    # Add columns
-    for key, header in columns:
-        table.add_column(header, style="cyan" if key == "name" else None)
-
-    # Add rows
-    for item in data:
-        row = []
-        for key, _ in columns:
-            value = item.get(key, "")
-            if isinstance(value, (int, float)):
-                value = str(value)
-            row.append(value)
-        table.add_row(*row)
-
-    return table
+    return StatusDisplay(message, spinner)
 
 
-def format_json(data: Any, title: Optional[str] = None) -> None:
-    """Format and display JSON data with syntax highlighting"""
-    import json
+# Progress callback creators
+def create_file_progress_callback(progress: Progress, task_id: int):
+    """Create a file progress callback
 
-    json_str = json.dumps(data, indent=2, default=str)
-    syntax = Syntax(json_str, "json", theme="monokai", line_numbers=False)
+    Args:
+        progress: Progress instance
+        task_id: Task ID
 
-    if title:
-        panel = Panel(syntax, title=title, border_style="blue")
-        console.print(panel)
-    else:
-        console.print(syntax)
+    Returns:
+        Callback function
+    """
+    def callback(current: int, total: int):
+        """Update progress"""
+        progress.update(task_id, completed=current, total=total)
+
+    return callback
 
 
-def format_yaml(data: Any, title: Optional[str] = None) -> None:
-    """Format and display YAML data with syntax highlighting"""
-    import yaml
+def create_transfer_progress_callback(progress: Progress, task_id: int, filename: str):
+    """Create a transfer progress callback
 
-    yaml_str = yaml.dump(data, default_flow_style=False, sort_keys=False)
-    syntax = Syntax(yaml_str, "yaml", theme="monokai", line_numbers=False)
+    Args:
+        progress: Progress instance
+        task_id: Task ID
+        filename: File being transferred
 
+<<<<<<< Updated upstream
     if title:
         panel = Panel(syntax, title=title, border_style="blue")
         console.print(panel)
@@ -510,22 +744,31 @@ def format_component_list(components: List[Dict[str, Any]],
             comp.get('version', 'N/A'),
             comp.get('created_at', 'N/A'),
             _format_size(comp.get('size', 0))
+=======
+    Returns:
+        Callback function
+    """
+    def callback(current: int, total: int):
+        """Update progress"""
+        progress.update(
+            task_id,
+            completed=current,
+            total=total,
+            filename=filename
+>>>>>>> Stashed changes
         )
 
-    console.print(table)
+    return callback
 
 
-def format_release_list(releases: List[Dict[str, Any]]) -> None:
-    """Format and display release list"""
-    if not releases:
-        console.print("[yellow]No releases found[/yellow]")
-        return
+# Utility functions
+def format_size(size_bytes: int) -> str:
+    """Format file size for display
 
-    table = Table(title="Releases", box=box.SIMPLE)
-    table.add_column("Version", style="cyan")
-    table.add_column("Components", style="green")
-    table.add_column("Created", style="dim")
+    Args:
+        size_bytes: Size in bytes
 
+<<<<<<< Updated upstream
     for release in releases:
         components = release.get('components', [])
         comp_summary = f"{len(components)} components"
@@ -539,9 +782,46 @@ def format_release_list(releases: List[Dict[str, Any]]) -> None:
 =======
 def _format_size(size_bytes: int) -> str:
     """Format file size in human-readable format"""
+=======
+    Returns:
+        Formatted size string
+    """
+>>>>>>> Stashed changes
     for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
         if size_bytes < 1024.0:
             return f"{size_bytes:.1f} {unit}"
         size_bytes /= 1024.0
     return f"{size_bytes:.1f} PB"
+<<<<<<< Updated upstream
 >>>>>>> parent of ea5206d (Refactor deployment logic to simplify component handling; improve error messages and enhance verification process)
+=======
+
+
+def truncate_path(path: str, max_length: int = 50) -> str:
+    """Truncate path for display
+
+    Args:
+        path: Path to truncate
+        max_length: Maximum length
+
+    Returns:
+        Truncated path
+    """
+    if len(path) <= max_length:
+        return path
+
+    # Try to keep filename
+    import os
+    dirname, filename = os.path.split(path)
+
+    if len(filename) >= max_length - 3:
+        # Filename itself is too long
+        return "..." + path[-(max_length - 3):]
+
+    # Truncate directory part
+    remaining = max_length - len(filename) - 4  # 4 for ".../""
+    if remaining > 0:
+        return "..." + dirname[-remaining:] + "/" + filename
+    else:
+        return ".../" + filename
+>>>>>>> Stashed changes

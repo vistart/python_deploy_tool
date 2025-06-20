@@ -1,36 +1,64 @@
 """Data models for deploy-tool"""
 
-from .component import Component, PublishComponent
-from .manifest import Manifest, ReleaseManifest, ComponentManifest, FileEntry
-from .result import PackResult, PublishResult, DeployResult, VerifyResult, ComponentPublishResult
-from .config import PackageConfig, SourceConfig, CompressionConfig, OutputConfig
-from .project import ProjectInfo, DeploymentInfo
+from .project import Project, ProjectConfig
+from .component import Component, ComponentManifest, ComponentType
+from .manifest import (
+    Manifest,
+    PackageInfo,
+    LocationInfo,
+    ChecksumInfo,
+    DeploymentState,
+    VersionEntry
+)
+from .config import (
+    Config,
+    PublishTarget,
+    DeployConfig,
+    FailoverConfig,
+    RetentionPolicy,
+    CacheConfig
+)
+from .result import (
+    Result,
+    PackResult,
+    PublishResult,
+    DeployResult,
+    OperationStatus,
+    ErrorDetail, PublishLocationResult
+)
 
 __all__ = [
+    # Project models
+    "Project",
+    "ProjectConfig",
+
     # Component models
     "Component",
-    "PublishComponent",
+    "ComponentManifest",
+    "ComponentType",
 
     # Manifest models
     "Manifest",
-    "ReleaseManifest",
-    "ComponentManifest",
-    "FileEntry",
-
-    # Result models
-    "PackResult",
-    "PublishResult",
-    "ComponentPublishResult",
-    "DeployResult",
-    "VerifyResult",
+    "PackageInfo",
+    "LocationInfo",
+    "ChecksumInfo",
+    "DeploymentState",
+    "VersionEntry",
 
     # Config models
-    "PackageConfig",
-    "SourceConfig",
-    "CompressionConfig",
-    "OutputConfig",
+    "Config",
+    "PublishTarget",
+    "DeployConfig",
+    "FailoverConfig",
+    "RetentionPolicy",
+    "CacheConfig",
 
-    # Project models
-    "ProjectInfo",
-    "DeploymentInfo",
+    # Result models
+    "Result",
+    "PackResult",
+    "PublishResult",
+    "DeployResult",
+    "OperationStatus",
+    "ErrorDetail",
+    "PublishLocationResult",
 ]

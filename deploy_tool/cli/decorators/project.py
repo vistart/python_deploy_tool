@@ -1,158 +1,249 @@
-"""Project context decorators"""
+"""Project context decorator for CLI commands"""
 
-import functools
-import sys
-from typing import Callable
+import os
+from functools import wraps
+from pathlib import Path
+from typing import Callable, Optional
 
 import click
-from rich.console import Console
 
-console = Console()
+from ..utils.output import console
+from ...core.project_manager import ProjectManager
+from ...constants import PROJECT_CONFIG_FILE, EMOJI_ERROR, EMOJI_WARNING
 
 
-def require_project(func: Callable) -> Callable:
-    """Decorator that ensures a valid project context exists
+def project_required(func: Callable) -> Callable:
+    """Decorator that ensures command runs in a valid project context
 
     This decorator:
-    1. Marks the context as requiring a project
-    2. Triggers lazy loading of project root and path resolver
-    3. Checks that a valid project was found
-    4. Shows appropriate error messages if no project exists
-
-    Example:
-        @click.command()
-        @require_project
-        def pack(ctx, ...):
-            # Can safely use ctx.obj.path_resolver
+    1. Finds the project root directory
+    2. Loads project configuration
+    3. Adds project info to click context
+    4. Validates project structure
 
     Args:
-        func: The command function to decorate
+        func: Command function to decorate
 
     Returns:
-        Wrapped function that checks for project context
+        Decorated function
     """
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        ctx = click.get_current_context()
 
-    @functools.wraps(func)
-    def wrapper(ctx: click.Context, *args, **kwargs):
-        """Wrapper function that performs project checks"""
+        # Find project root
+        project_root = find_project_root()
 
-        # Mark that this command requires a project
-        if hasattr(ctx.obj, 'require_project'):
-            ctx.obj.require_project()
+        if not project_root:
+            console.print(
+                f"{EMOJI_ERROR} Not in a deploy-tool project directory.\n"
+                f"Run 'deploy-tool init' to initialize a new project."
+            )
+            ctx.exit(1)
 
-        # Access path_resolver to trigger lazy loading
-        if ctx.obj.path_resolver is None:
-            console.print("[red]Error: No deployment project found[/red]")
-            console.print("\nThis command must be run within a deployment project.")
-            console.print("Look for a parent directory containing '.deploy-tool.yaml'")
-            console.print("\n[yellow]Hint:[/yellow] Run 'deploy-tool init' to create a new project")
-            sys.exit(1)
+        # Add to context
+        ctx.project_root = project_root
+        ctx.ensure_object(dict)
+        ctx.obj['project_root'] = project_root
 
-        # Also ensure project root is available
-        if ctx.obj.project_root is None:
-            console.print("[red]Error: Project root not determined[/red]")
-            console.print("\nThis should not happen. Please report this issue.")
-            sys.exit(1)
+        # Initialize project manager
+        try:
+            project_manager = ProjectManager(project_root)
+            project = project_manager.load_project()
 
-        # Call the original function
-        return func(ctx, *args, **kwargs)
+            # Add to context
+            ctx.project = project
+            ctx.project_manager = project_manager
+            ctx.obj['project'] = project
+            ctx.obj['project_manager'] = project_manager
+
+        except Exception as e:
+            console.print(
+                f"{EMOJI_ERROR} Failed to load project: {str(e)}"
+            )
+            ctx.exit(1)
+
+        # Validate project structure
+        issues = project.validate()
+        if issues:
+            console.print(f"{EMOJI_WARNING} Project validation warnings:")
+            for issue in issues:
+                console.print(f"  - {issue}")
+            console.print()
+
+        # Run the actual command
+        return func(*args, **kwargs)
 
     return wrapper
 
 
-def ensure_no_project(func: Callable) -> Callable:
-    """Decorator that ensures NO project context exists (or warns if it does)
-
-    This is used for commands like 'init' that create new projects.
-    It warns if running inside an existing project but doesn't block
-    the operation (user might want to re-initialize).
-
-    Example:
-        @click.command()
-        @ensure_no_project
-        def init(ctx, ...):
-            # Safe to create new project
+def find_project_root(start_path: Optional[Path] = None) -> Optional[Path]:
+    """Find the project root directory by looking for marker files
 
     Args:
-        func: The command function to decorate
+        start_path: Starting directory (defaults to current directory)
 
     Returns:
-        Wrapped function that checks for existing project
+        Project root path or None if not found
     """
+    if start_path is None:
+        start_path = Path.cwd()
+    else:
+        start_path = Path(start_path).resolve()
 
-    @functools.wraps(func)
-    def wrapper(ctx: click.Context, *args, **kwargs):
-        """Wrapper function that checks for existing project"""
+    current = start_path
 
-        # For init command, check if already in a project
-        # Note: We don't call require_project() here
-        if hasattr(ctx.obj, '_find_project_root_safe'):
-            existing_root = ctx.obj._find_project_root_safe()
+    # Check each directory up to root
+    while current != current.parent:
+        # Check for project config file
+        if (current / PROJECT_CONFIG_FILE).exists():
+            return current
 
-            if existing_root:
-                # Get the target path from args if provided
-                target_path = Path(args[0]) if args and len(args) > 0 else Path('.')
-                target_path = target_path.resolve()
+        # Check for deployment directory (legacy projects)
+        if (current / "deployment").is_dir():
+            # Double-check it's a deploy-tool project
+            if (current / "deployment" / "manifests").is_dir():
+                return current
 
-                # Only warn if trying to init in the current project root
-                if existing_root == target_path:
-                    console.print("[yellow]Warning: Already in a deployment project[/yellow]")
-                    console.print(f"Project root: {existing_root}")
-                    console.print()
+        # Move up
+        current = current.parent
 
-        return func(ctx, *args, **kwargs)
+    # Check root directory
+    if (current / PROJECT_CONFIG_FILE).exists():
+        return current
 
-    return wrapper
+    return None
 
 
-def with_project_defaults(func: Callable) -> Callable:
-    """Decorator that applies project-specific defaults to command options
-
-    This decorator reads project configuration and applies defaults
-    before the command executes. It's useful for commands that have
-    options that can be defaulted from project config.
-
-    Example:
-        @click.command()
-        @click.option('--output', default=None)
-        @require_project
-        @with_project_defaults
-        def pack(ctx, output, ...):
-            # output will be set from project config if not provided
+def project_optional(func: Callable) -> Callable:
+    """Decorator for commands that can work with or without a project
 
     Args:
-        func: The command function to decorate
+        func: Command function to decorate
 
     Returns:
-        Wrapped function with defaults applied
+        Decorated function
     """
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        ctx = click.get_current_context()
 
-    @functools.wraps(func)
-    def wrapper(ctx: click.Context, *args, **kwargs):
-        """Wrapper function that applies project defaults"""
+        # Try to find project root
+        project_root = find_project_root()
 
-        # Only apply defaults if we have a project context
-        if hasattr(ctx.obj, 'path_resolver') and ctx.obj.path_resolver:
+        if project_root:
+            # Add to context
+            ctx.project_root = project_root
+            ctx.ensure_object(dict)
+            ctx.obj['project_root'] = project_root
+
+            # Try to load project
             try:
-                # Load project config
-                config_file = ctx.obj.project_root / '.deploy-tool.yaml'
-                if config_file.exists():
-                    import yaml
-                    with open(config_file) as f:
-                        config = yaml.safe_load(f)
+                project_manager = ProjectManager(project_root)
+                project = project_manager.load_project()
 
-                    # Apply defaults from config
-                    defaults = config.get('defaults', {})
+                ctx.project = project
+                ctx.project_manager = project_manager
+                ctx.obj['project'] = project
+                ctx.obj['project_manager'] = project_manager
 
-                    # Update kwargs with defaults if not explicitly provided
-                    for key, value in defaults.items():
-                        if key in kwargs and kwargs[key] is None:
-                            kwargs[key] = value
+            except Exception:
+                # Project load failed, but that's OK for optional
+                ctx.project = None
+                ctx.project_manager = None
+        else:
+            # No project found
+            ctx.project_root = None
+            ctx.project = None
+            ctx.project_manager = None
 
-            except Exception as e:
-                if ctx.obj.debug:
-                    console.print(f"[yellow]Warning: Could not load project defaults: {e}[/yellow]")
-
-        return func(ctx, *args, **kwargs)
+        # Run the actual command
+        return func(*args, **kwargs)
 
     return wrapper
+
+
+def with_project_root(path_arg: str = 'path'):
+    """Decorator that accepts a project root path argument
+
+    Args:
+        path_arg: Name of the path argument
+
+    Returns:
+        Decorator function
+    """
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            ctx = click.get_current_context()
+
+            # Get path from arguments
+            path = kwargs.get(path_arg)
+
+            if path:
+                # Use provided path
+                project_root = Path(path).resolve()
+
+                # Verify it's a valid project
+                if not (project_root / PROJECT_CONFIG_FILE).exists():
+                    console.print(
+                        f"{EMOJI_ERROR} No project found at: {project_root}"
+                    )
+                    ctx.exit(1)
+            else:
+                # Find project root from current directory
+                project_root = find_project_root()
+
+                if not project_root:
+                    console.print(
+                        f"{EMOJI_ERROR} Not in a deploy-tool project directory."
+                    )
+                    ctx.exit(1)
+
+            # Add to context
+            ctx.project_root = project_root
+            ctx.ensure_object(dict)
+            ctx.obj['project_root'] = project_root
+
+            # Update kwargs with resolved path
+            kwargs[path_arg] = project_root
+
+            # Run the actual command
+            return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
+def ensure_project_structure(*required_dirs):
+    """Decorator that ensures required project directories exist
+
+    Args:
+        *required_dirs: Directory names to check/create
+
+    Returns:
+        Decorator function
+    """
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        @project_required
+        def wrapper(*args, **kwargs):
+            ctx = click.get_current_context()
+            project_root = ctx.project_root
+
+            # Check/create required directories
+            for dir_name in required_dirs:
+                dir_path = project_root / dir_name
+                if not dir_path.exists():
+                    console.print(
+                        f"{EMOJI_WARNING} Creating missing directory: {dir_name}"
+                    )
+                    dir_path.mkdir(parents=True, exist_ok=True)
+
+            # Run the actual command
+            return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator

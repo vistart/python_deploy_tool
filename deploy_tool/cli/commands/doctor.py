@@ -1,268 +1,274 @@
-"""System diagnostic command"""
+"""Doctor command for diagnosing and fixing issues"""
 
-import os
+import shutil
 import sys
+from pathlib import Path
 
-import click
-from rich import box
-from rich.console import Console
 from rich.table import Table
 
-from ..decorators import require_project
-from ...utils.git_utils import check_git_status
-from ...utils.async_utils import run_async
-
-console = Console()
-
-
-class DiagnosticCheck:
-    """Base class for diagnostic checks"""
-
-    def __init__(self, name: str, description: str):
-        self.name = name
-        self.description = description
-        self.passed = False
-        self.message = ""
-        self.fixes = []
-
-    def run(self, ctx) -> 'DiagnosticCheck':
-        """Run the diagnostic check"""
-        raise NotImplementedError
-
-    def fix(self, ctx) -> bool:
-        """Attempt to fix the issue"""
-        return False
+from ..utils.output import console, print_success, print_warning
+from ...constants import (
+    EMOJI_SUCCESS,
+    EMOJI_INFO,
+    DEFAULT_CACHE_DIR
+)
 
 
-class ProjectStructureCheck(DiagnosticCheck):
-    """Check project directory structure"""
+def check_environment(fix: bool = False) -> None:
+    """Check deployment environment"""
 
-    def __init__(self):
-        super().__init__(
-            "Project Structure",
-            "Verify standard directory structure exists"
-        )
+    console.print("[bold]Deploy Tool Environment Check[/bold]\n")
 
-    def run(self, ctx):
-        required_dirs = [
-            "deployment/package-configs",
-            "deployment/manifests",
-            "deployment/releases",
-            "dist"
-        ]
+    issues = []
 
-        missing = []
-        for dir_path in required_dirs:
-            full_path = ctx.obj.project_root / dir_path
-            if not full_path.exists():
-                missing.append(dir_path)
-
-        if missing:
-            self.passed = False
-            self.message = f"Missing directories: {', '.join(missing)}"
-            self.fixes = [f"Create {d}" for d in missing]
-        else:
-            self.passed = True
-            self.message = "All required directories exist"
-
-        return self
-
-    def fix(self, ctx):
-        required_dirs = [
-            "deployment/package-configs",
-            "deployment/manifests",
-            "deployment/releases",
-            "dist"
-        ]
-
-        for dir_path in required_dirs:
-            full_path = ctx.obj.project_root / dir_path
-            full_path.mkdir(parents=True, exist_ok=True)
-
-        return True
-
-
-class GitStatusCheck(DiagnosticCheck):
-    """Check Git repository status"""
-
-    def __init__(self):
-        super().__init__(
-            "Git Status",
-            "Check Git repository health"
-        )
-
-    def run(self, ctx):
-        git_status = check_git_status(ctx.obj.project_root)
-
-        if not git_status['is_git_repo']:
-            self.passed = False
-            self.message = "Not a Git repository"
-            self.fixes = ["Initialize Git repository"]
-        elif git_status['has_uncommitted']:
-            self.passed = False
-            self.message = f"Uncommitted changes: {git_status['uncommitted_count']} files"
-        else:
-            self.passed = True
-            self.message = f"Clean working tree on branch '{git_status['branch']}'"
-
-        return self
-
-    def fix(self, ctx):
-        if not (ctx.obj.project_root / '.git').exists():
-            from ...utils.git_utils import init_git_repo
-            init_git_repo(ctx.obj.project_root)
-            return True
-        return False
-
-
-class StorageAccessCheck(DiagnosticCheck):
-    """Check storage backend access"""
-
-    def __init__(self):
-        super().__init__(
-            "Storage Access",
-            "Verify storage backend connectivity"
-        )
-
-    def run(self, ctx):
-        # Check for storage configuration
-        storage_type = os.environ.get('DEPLOY_TOOL_STORAGE', 'filesystem')
-
-        if storage_type == 'bos':
-            if not all([
-                os.environ.get('BOS_AK'),
-                os.environ.get('BOS_SK'),
-                os.environ.get('BOS_BUCKET')
-            ]):
-                self.passed = False
-                self.message = "BOS credentials not configured"
-                self.fixes = ["Set BOS_AK, BOS_SK, BOS_BUCKET environment variables"]
-            else:
-                # TODO: Test actual BOS connectivity
-                self.passed = True
-                self.message = f"BOS configured for bucket: {os.environ.get('BOS_BUCKET')}"
-        else:
-            self.passed = True
-            self.message = "Using local filesystem storage"
-
-        return self
-
-
-class PermissionsCheck(DiagnosticCheck):
-    """Check file permissions"""
-
-    def __init__(self):
-        super().__init__(
-            "File Permissions",
-            "Verify read/write permissions"
-        )
-
-    def run(self, ctx):
-        test_paths = [
-            ctx.obj.project_root / "deployment",
-            ctx.obj.project_root / "dist"
-        ]
-
-        issues = []
-        for path in test_paths:
-            if path.exists():
-                # Check write permission
-                try:
-                    test_file = path / ".permission_test"
-                    test_file.touch()
-                    test_file.unlink()
-                except Exception:
-                    issues.append(str(path.relative_to(ctx.obj.project_root)))
-
-        if issues:
-            self.passed = False
-            self.message = f"No write permission: {', '.join(issues)}"
-        else:
-            self.passed = True
-            self.message = "All directories have proper permissions"
-
-        return self
-
-
-@click.command()
-@click.option('--fix', is_flag=True, help='Attempt to fix issues automatically')
-@click.option('--check', multiple=True,
-              type=click.Choice(['all', 'structure', 'git', 'storage', 'permissions']),
-              default=['all'],
-              help='Specific checks to run')
-@click.pass_context
-@require_project
-def doctor(ctx, fix, check):
-    """Run system diagnostics
-
-    This command checks the health of your deployment project and can
-    automatically fix common issues.
-
-    Examples:
-
-        # Run all checks
-        deploy-tool doctor
-
-        # Run specific checks
-        deploy-tool doctor --check structure --check git
-
-        # Attempt automatic fixes
-        deploy-tool doctor --fix
-    """
-    console.print("[bold]Deploy Tool Diagnostics[/bold]\n")
-
-    # Determine which checks to run
-    all_checks = {
-        'structure': ProjectStructureCheck(),
-        'git': GitStatusCheck(),
-        'storage': StorageAccessCheck(),
-        'permissions': PermissionsCheck()
-    }
-
-    if 'all' in check:
-        checks_to_run = list(all_checks.values())
+    # Check Python version
+    python_version = sys.version_info
+    if python_version < (3, 8):
+        issues.append({
+            'level': 'error',
+            'component': 'Python',
+            'issue': f'Python {python_version.major}.{python_version.minor} is too old',
+            'fix': 'Upgrade to Python 3.8 or later'
+        })
     else:
-        checks_to_run = [all_checks[c] for c in check if c in all_checks]
+        print_success(f"Python {python_version.major}.{python_version.minor}.{python_version.micro}")
 
-    # Run checks
-    failed_checks = []
-    for diagnostic_check in checks_to_run:
-        diagnostic_check.run(ctx)
-        if not diagnostic_check.passed:
-            failed_checks.append(diagnostic_check)
+    # Check required Python modules
+    required_modules = [
+        ('click', 'CLI framework'),
+        ('rich', 'Terminal formatting'),
+        ('yaml', 'YAML parsing'),
+        ('aiofiles', 'Async file operations'),
+    ]
 
-    # Display results
-    table = Table(title="Diagnostic Results", box=box.ROUNDED)
-    table.add_column("Check", style="cyan")
-    table.add_column("Status", justify="center")
-    table.add_column("Details")
+    for module_name, description in required_modules:
+        try:
+            __import__(module_name)
+            print_success(f"{module_name} - {description}")
+        except ImportError:
+            issues.append({
+                'level': 'error',
+                'component': module_name,
+                'issue': f'Module not installed',
+                'fix': f'pip install {module_name}'
+            })
 
-    for diagnostic_check in checks_to_run:
-        status = "[green]✓ PASS[/green]" if diagnostic_check.passed else "[red]✗ FAIL[/red]"
-        table.add_row(
-            diagnostic_check.name,
-            status,
-            diagnostic_check.message
-        )
+    # Check optional modules
+    optional_modules = [
+        ('bce-python-sdk', 'BOS support', 'bce-python-sdk'),
+        ('boto3', 'S3 support', 'boto3'),
+        ('lz4', 'LZ4 compression', 'lz4'),
+    ]
 
-    console.print(table)
+    console.print("\n[bold]Optional Features:[/bold]")
+    for module_name, description, pip_name in optional_modules:
+        try:
+            __import__(module_name.replace('-', '_'))
+            print_success(f"{module_name} - {description}")
+        except ImportError:
+            print_warning(f"{module_name} - {description} (not installed)")
+            if fix:
+                issues.append({
+                    'level': 'warning',
+                    'component': module_name,
+                    'issue': 'Optional feature not available',
+                    'fix': f'pip install {pip_name}'
+                })
 
-    # Attempt fixes if requested
-    if fix and failed_checks:
-        console.print("\n[yellow]Attempting automatic fixes...[/yellow]\n")
+    # Check compression support
+    console.print("\n[bold]Compression Support:[/bold]")
 
-        for diagnostic_check in failed_checks:
-            if diagnostic_check.fixes:
-                console.print(f"Fixing: {diagnostic_check.name}")
-                if diagnostic_check.fix(ctx):
-                    console.print(f"[green]✓[/green] Fixed: {diagnostic_check.name}")
-                else:
-                    console.print(f"[red]✗[/red] Could not fix: {diagnostic_check.name}")
+    compression_modules = [
+        ('gzip', 'GZIP compression'),
+        ('bz2', 'BZIP2 compression'),
+        ('lzma', 'XZ compression'),
+    ]
 
-    # Exit code based on results
-    if failed_checks and not fix:
-        console.print(f"\n[red]{len(failed_checks)} check(s) failed[/red]")
-        console.print("Run with --fix to attempt automatic fixes")
-        sys.exit(1)
+    for module_name, description in compression_modules:
+        try:
+            __import__(module_name)
+            print_success(f"{module_name} - {description}")
+        except ImportError:
+            issues.append({
+                'level': 'error',
+                'component': module_name,
+                'issue': f'{description} not available',
+                'fix': 'Rebuild Python with compression support'
+            })
+
+    # Check system commands
+    console.print("\n[bold]System Commands:[/bold]")
+
+    commands = [
+        ('git', 'Version control'),
+        ('tar', 'Archive operations'),
+        ('rsync', 'File synchronization'),
+    ]
+
+    for cmd, description in commands:
+        if shutil.which(cmd):
+            print_success(f"{cmd} - {description}")
+        else:
+            level = 'warning' if cmd != 'tar' else 'error'
+            issues.append({
+                'level': level,
+                'component': cmd,
+                'issue': f'Command not found',
+                'fix': f'Install {cmd} using your package manager'
+            })
+
+    # Check file permissions
+    console.print("\n[bold]File Permissions:[/bold]")
+
+    # Check if we can write to temp
+    try:
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', delete=True) as f:
+            f.write('test')
+        print_success("Temp directory writable")
+    except Exception as e:
+        issues.append({
+            'level': 'error',
+            'component': 'Temp directory',
+            'issue': 'Cannot write to temp directory',
+            'fix': 'Check disk space and permissions'
+        })
+
+    # Show issues summary
+    if issues:
+        console.print(f"\n[bold]Issues Found:[/bold]")
+
+        table = Table(show_header=True)
+        table.add_column("Level", style="bold")
+        table.add_column("Component")
+        table.add_column("Issue")
+        table.add_column("Fix")
+
+        for issue in issues:
+            style = "red" if issue['level'] == 'error' else "yellow"
+            table.add_row(
+                f"[{style}]{issue['level'].upper()}[/{style}]",
+                issue['component'],
+                issue['issue'],
+                issue['fix']
+            )
+
+        console.print(table)
+
+        # Attempt fixes if requested
+        if fix:
+            console.print(f"\n{EMOJI_INFO} Attempting to fix issues...")
+
+            for issue in issues:
+                if issue['level'] == 'warning' and 'pip install' in issue['fix']:
+                    console.print(f"Suggested fix: {issue['fix']}")
+
     else:
-        console.print("\n[green]All checks passed![/green]")
+        console.print(f"\n{EMOJI_SUCCESS} All checks passed!")
+
+
+def clean_cache(dry_run: bool = False, clean_all: bool = False) -> None:
+    """Clean up temporary files and cache"""
+
+    console.print("[bold]Deploy Tool Cache Cleanup[/bold]\n")
+
+    # Find cache directories
+    cache_dirs = []
+
+    # Check current directory
+    local_cache = Path.cwd() / DEFAULT_CACHE_DIR
+    if local_cache.exists():
+        cache_dirs.append(local_cache)
+
+    # Check home directory
+    home_cache = Path.home() / '.deploy-tool' / 'cache'
+    if home_cache.exists():
+        cache_dirs.append(home_cache)
+
+    # Check temp directory
+    temp_patterns = [
+        'deploy-tool-*',
+        'tmp-deploy-*',
+    ]
+
+    import tempfile
+    temp_dir = Path(tempfile.gettempdir())
+
+    for pattern in temp_patterns:
+        for path in temp_dir.glob(pattern):
+            if path.is_dir():
+                cache_dirs.append(path)
+
+    if not cache_dirs:
+        console.print(f"{EMOJI_INFO} No cache directories found")
+        return
+
+    # Show what will be cleaned
+    total_size = 0
+    file_count = 0
+
+    console.print("Found cache directories:")
+    for cache_dir in cache_dirs:
+        dir_size = get_directory_size(cache_dir)
+        dir_files = count_files(cache_dir)
+
+        total_size += dir_size
+        file_count += dir_files
+
+        console.print(f"  - {cache_dir} ({format_size(dir_size)}, {dir_files} files)")
+
+    console.print(f"\nTotal: {format_size(total_size)} in {file_count} files")
+
+    # Clean if not dry run
+    if not dry_run:
+        if clean_all:
+            # Clean everything
+            for cache_dir in cache_dirs:
+                console.print(f"\nCleaning {cache_dir}...")
+                shutil.rmtree(cache_dir, ignore_errors=True)
+                print_success(f"Removed {cache_dir}")
+        else:
+            # Clean only old files (older than 7 days)
+            import time
+            cutoff_time = time.time() - (7 * 24 * 60 * 60)
+
+            cleaned_size = 0
+            cleaned_files = 0
+
+            for cache_dir in cache_dirs:
+                for path in cache_dir.rglob('*'):
+                    if path.is_file():
+                        if path.stat().st_mtime < cutoff_time:
+                            size = path.stat().st_size
+                            path.unlink()
+                            cleaned_size += size
+                            cleaned_files += 1
+
+            console.print(f"\n{EMOJI_SUCCESS} Cleaned {format_size(cleaned_size)} in {cleaned_files} old files")
+
+    else:
+        console.print(f"\n{EMOJI_INFO} Dry run mode - no files were deleted")
+        console.print("Run without --dry-run to actually clean cache")
+
+
+def get_directory_size(path: Path) -> int:
+    """Get total size of directory"""
+    total = 0
+    for p in path.rglob('*'):
+        if p.is_file():
+            total += p.stat().st_size
+    return total
+
+
+def count_files(path: Path) -> int:
+    """Count files in directory"""
+    return sum(1 for p in path.rglob('*') if p.is_file())
+
+
+def format_size(size_bytes: int) -> str:
+    """Format file size"""
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if size_bytes < 1024.0:
+            return f"{size_bytes:.1f} {unit}"
+        size_bytes /= 1024.0
+    return f"{size_bytes:.1f} TB"

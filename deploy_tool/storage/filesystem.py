@@ -1,5 +1,6 @@
 """Filesystem storage backend implementation"""
 
+<<<<<<< Updated upstream
 import asyncio
 import os
 import shutil
@@ -13,15 +14,30 @@ from ..utils.file_utils import (
     calculate_file_hash,
     get_file_metadata
 )
+=======
+import os
+import shutil
+import aiofiles
+import asyncio
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, List, Optional, Any
+
+from .base import StorageBackend
+from ..utils.file_utils import calculate_file_checksum, get_file_size
+from ..constants import DEFAULT_CHUNK_SIZE
+>>>>>>> Stashed changes
 
 
-class FileSystemStorage(StorageBackend):
-    """Local filesystem storage implementation"""
+class FilesystemStorage(StorageBackend):
+    """Local filesystem storage backend"""
 
-    def __init__(self, config: Dict[str, Any] = None, path_resolver: PathResolver = None):
-        """
-        Initialize filesystem storage
+    def _validate_config(self) -> None:
+        """Validate filesystem configuration"""
+        if 'path' not in self.config:
+            raise ValueError("Filesystem storage requires 'path' configuration")
 
+<<<<<<< Updated upstream
         Args:
             config: Configuration including:
                 - base_path: Base storage path (optional)
@@ -59,10 +75,48 @@ class FileSystemStorage(StorageBackend):
             local_path: Local file path
             remote_path: Remote storage path (relative to base_path)
             callback: Progress callback
+=======
+        # Ensure base path exists
+        self.base_path = Path(self.config['path'])
+        if not self.base_path.exists():
+            self.base_path.mkdir(parents=True, exist_ok=True)
+
+    def _get_full_path(self, remote_path: str) -> Path:
+        """Get full filesystem path
+
+        Args:
+            remote_path: Relative remote path
 
         Returns:
-            True if successful
+            Full filesystem path
         """
+        # Normalize path separators
+        remote_path = remote_path.replace('\\', '/')
+
+        # Remove leading slash if present
+        if remote_path.startswith('/'):
+            remote_path = remote_path[1:]
+
+        return self.base_path / remote_path
+
+    async def upload(
+        self,
+        local_path: str,
+        remote_path: str,
+        progress_callback: Optional[callable] = None
+    ) -> Dict[str, Any]:
+        """Upload (copy) a file to filesystem storage
+
+        Args:
+            local_path: Local file path
+            remote_path: Remote destination path
+            progress_callback: Optional callback for progress updates
+>>>>>>> Stashed changes
+
+        Returns:
+            Upload result metadata
+        """
+<<<<<<< Updated upstream
         try:
             # Ensure storage is initialized
             await self.initialize()
@@ -429,3 +483,279 @@ class FileSystemStorage(StorageBackend):
         """Get the actual local path for a remote path (filesystem-specific)"""
         return self._get_full_path(remote_path)
 >>>>>>> parent of ea5206d (Refactor deployment logic to simplify component handling; improve error messages and enhance verification process)
+=======
+        source = Path(local_path)
+        if not source.exists():
+            raise FileNotFoundError(f"Source file not found: {local_path}")
+
+        dest = self._get_full_path(remote_path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        file_size = get_file_size(source)
+        bytes_copied = 0
+
+        # Copy with progress tracking
+        async with aiofiles.open(source, 'rb') as src:
+            async with aiofiles.open(dest, 'wb') as dst:
+                while True:
+                    chunk = await src.read(DEFAULT_CHUNK_SIZE)
+                    if not chunk:
+                        break
+
+                    await dst.write(chunk)
+                    bytes_copied += len(chunk)
+
+                    if progress_callback:
+                        await progress_callback(bytes_copied, file_size)
+
+        # Calculate checksum
+        checksum = calculate_file_checksum(dest)
+
+        return {
+            "path": str(dest),
+            "size": file_size,
+            "checksum": checksum,
+            "uploaded_at": datetime.utcnow().isoformat()
+        }
+
+    async def download(
+        self,
+        remote_path: str,
+        local_path: str,
+        progress_callback: Optional[callable] = None
+    ) -> Dict[str, Any]:
+        """Download (copy) a file from filesystem storage
+
+        Args:
+            remote_path: Remote source path
+            local_path: Local destination path
+            progress_callback: Optional callback for progress updates
+
+        Returns:
+            Download result metadata
+        """
+        source = self._get_full_path(remote_path)
+        if not source.exists():
+            raise FileNotFoundError(f"Source file not found: {source}")
+
+        dest = Path(local_path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        file_size = get_file_size(source)
+        bytes_copied = 0
+
+        # Copy with progress tracking
+        async with aiofiles.open(source, 'rb') as src:
+            async with aiofiles.open(dest, 'wb') as dst:
+                while True:
+                    chunk = await src.read(DEFAULT_CHUNK_SIZE)
+                    if not chunk:
+                        break
+
+                    await dst.write(chunk)
+                    bytes_copied += len(chunk)
+
+                    if progress_callback:
+                        await progress_callback(bytes_copied, file_size)
+
+        return {
+            "path": str(dest),
+            "size": file_size,
+            "downloaded_at": datetime.utcnow().isoformat()
+        }
+
+    async def exists(self, remote_path: str) -> bool:
+        """Check if a file exists in filesystem storage
+
+        Args:
+            remote_path: Remote file path
+
+        Returns:
+            True if file exists, False otherwise
+        """
+        path = self._get_full_path(remote_path)
+        return path.exists()
+
+    async def delete(self, remote_path: str) -> bool:
+        """Delete a file from filesystem storage
+
+        Args:
+            remote_path: Remote file path
+
+        Returns:
+            True if deleted successfully
+        """
+        path = self._get_full_path(remote_path)
+        if path.exists():
+            if path.is_file():
+                path.unlink()
+            elif path.is_dir():
+                shutil.rmtree(path)
+            return True
+        return False
+
+    async def list_objects(
+        self,
+        prefix: str = "",
+        recursive: bool = True,
+        max_keys: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """List objects in filesystem storage
+
+        Args:
+            prefix: Filter objects by prefix
+            recursive: List recursively
+            max_keys: Maximum number of objects to return
+
+        Returns:
+            List of object metadata
+        """
+        base = self._get_full_path(prefix) if prefix else self.base_path
+
+        objects = []
+        count = 0
+
+        if base.exists():
+            if recursive:
+                pattern = "**/*"
+            else:
+                pattern = "*"
+
+            for path in base.glob(pattern):
+                if path.is_file():
+                    rel_path = path.relative_to(self.base_path)
+
+                    # Get file metadata
+                    stat = path.stat()
+                    obj = {
+                        "key": str(rel_path).replace('\\', '/'),
+                        "path": str(path),
+                        "size": stat.st_size,
+                        "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                        "is_dir": False
+                    }
+                    objects.append(obj)
+
+                    count += 1
+                    if max_keys and count >= max_keys:
+                        break
+
+        return objects
+
+    async def get_metadata(self, remote_path: str) -> Dict[str, Any]:
+        """Get metadata for an object
+
+        Args:
+            remote_path: Remote file path
+
+        Returns:
+            Object metadata
+        """
+        path = self._get_full_path(remote_path)
+        if not path.exists():
+            raise FileNotFoundError(f"File not found: {path}")
+
+        stat = path.stat()
+        return {
+            "path": str(path),
+            "size": stat.st_size,
+            "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            "created": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+            "is_dir": path.is_dir(),
+            "permissions": oct(stat.st_mode)[-3:]
+        }
+
+    async def copy(
+        self,
+        source_path: str,
+        dest_path: str
+    ) -> Dict[str, Any]:
+        """Copy a file within filesystem storage
+
+        Args:
+            source_path: Source path
+            dest_path: Destination path
+
+        Returns:
+            Copy result metadata
+        """
+        source = self._get_full_path(source_path)
+        dest = self._get_full_path(dest_path)
+
+        if not source.exists():
+            raise FileNotFoundError(f"Source file not found: {source}")
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        if source.is_file():
+            shutil.copy2(source, dest)
+        else:
+            shutil.copytree(source, dest)
+
+        return {
+            "source": str(source),
+            "destination": str(dest),
+            "size": get_file_size(dest) if dest.is_file() else 0,
+            "copied_at": datetime.utcnow().isoformat()
+        }
+
+    async def move(
+        self,
+        source_path: str,
+        dest_path: str
+    ) -> Dict[str, Any]:
+        """Move a file within filesystem storage
+
+        Args:
+            source_path: Source path
+            dest_path: Destination path
+
+        Returns:
+            Move result metadata
+        """
+        source = self._get_full_path(source_path)
+        dest = self._get_full_path(dest_path)
+
+        if not source.exists():
+            raise FileNotFoundError(f"Source file not found: {source}")
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(source), str(dest))
+
+        return {
+            "source": str(source),
+            "destination": str(dest),
+            "moved_at": datetime.utcnow().isoformat()
+        }
+
+    def get_public_url(self, remote_path: str) -> Optional[str]:
+        """Get public URL for a file (not supported for filesystem)
+
+        Args:
+            remote_path: Remote file path
+
+        Returns:
+            None (filesystem doesn't support public URLs)
+        """
+        # Filesystem storage doesn't support public URLs
+        return None
+
+    def get_signed_url(
+        self,
+        remote_path: str,
+        expires_in: int = 3600,
+        method: str = "GET"
+    ) -> Optional[str]:
+        """Get signed URL for temporary access (not supported for filesystem)
+
+        Args:
+            remote_path: Remote file path
+            expires_in: Expiration time in seconds
+            method: HTTP method
+
+        Returns:
+            None (filesystem doesn't support signed URLs)
+        """
+        # Filesystem storage doesn't support signed URLs
+        return None
+>>>>>>> Stashed changes

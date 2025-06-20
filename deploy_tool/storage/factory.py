@@ -1,42 +1,31 @@
 """Storage backend factory"""
 
-import os
-from typing import Dict, Any
+from typing import Dict, Any, Type
 
 from .base import StorageBackend
+from .filesystem import FilesystemStorage
 from .bos import BOSStorage
-from .filesystem import FileSystemStorage
 from .s3 import S3Storage
-from ..constants import DEFAULT_STORAGE_TYPE
-from ..core.path_resolver import PathResolver
+from ..constants import StorageType
+from ..models.config import PublishTarget
 
 
 class StorageFactory:
     """Factory for creating storage backend instances"""
 
-    # Registry of available storage backends
-    _backends = {
-        'filesystem': FileSystemStorage,
-        'fs': FileSystemStorage,  # Alias
-        'local': FileSystemStorage,  # Alias
-        'bos': BOSStorage,
-        'baidu': BOSStorage,  # Alias
-        's3': S3Storage,
-        'aws': S3Storage,  # Alias
+    # Registry of storage backends
+    _backends: Dict[StorageType, Type[StorageBackend]] = {
+        StorageType.FILESYSTEM: FilesystemStorage,
+        StorageType.BOS: BOSStorage,
+        StorageType.S3: S3Storage,
     }
 
     @classmethod
-    def create(cls,
-               storage_type: str = None,
-               config: Dict[str, Any] = None,
-               path_resolver: PathResolver = None) -> StorageBackend:
-        """
-        Create storage backend instance
+    def create_from_config(cls, target: PublishTarget) -> StorageBackend:
+        """Create storage backend from publish target configuration
 
         Args:
-            storage_type: Type of storage backend
-            config: Backend-specific configuration
-            path_resolver: Path resolver instance (for filesystem backend)
+            target: Publish target configuration
 
         Returns:
             Storage backend instance
@@ -44,73 +33,103 @@ class StorageFactory:
         Raises:
             ValueError: If storage type is not supported
         """
-        # Determine storage type
-        if storage_type is None:
-            storage_type = os.environ.get('DEPLOY_TOOL_STORAGE', DEFAULT_STORAGE_TYPE)
+        storage_type = target.storage_type
 
-        storage_type = storage_type.lower()
-
-        # Validate storage type
         if storage_type not in cls._backends:
-            raise ValueError(
-                f"Unsupported storage type: {storage_type}. "
-                f"Supported types: {', '.join(sorted(set(cls._backends.keys())))}"
-            )
+            raise ValueError(f"Unsupported storage type: {storage_type.value}")
 
-        # Create configuration
-        if config is None:
-            config = cls._load_config_from_env(storage_type)
+        # Prepare configuration based on storage type
+        if storage_type == StorageType.FILESYSTEM:
+            config = {
+                "path": target.path,
+                "name": target.name
+            }
+
+        elif storage_type == StorageType.BOS:
+            config = {
+                "endpoint": target.bos_endpoint,
+                "bucket": target.bos_bucket,
+                "access_key": target.bos_access_key,
+                "secret_key": target.bos_secret_key,
+                "name": target.name
+            }
+
+        elif storage_type == StorageType.S3:
+            config = {
+                "region": target.s3_region,
+                "bucket": target.s3_bucket,
+                "access_key": target.s3_access_key,
+                "secret_key": target.s3_secret_key,
+                "name": target.name
+            }
+
+        else:
+            raise ValueError(f"No configuration mapping for storage type: {storage_type.value}")
+
+        # Add any additional options
+        if target.options:
+            config.update(target.options)
 
         # Create backend instance
         backend_class = cls._backends[storage_type]
-
-        if storage_type in ['filesystem', 'fs', 'local']:
-            # Filesystem backend needs path resolver
-            return backend_class(config, path_resolver)
-        else:
-            return backend_class(config)
+        return backend_class(config)
 
     @classmethod
-    def register(cls, name: str, backend_class: type):
-        """
-        Register custom storage backend
+    def create_from_dict(cls, storage_type: str, config: Dict[str, Any]) -> StorageBackend:
+        """Create storage backend from type and configuration dict
 
         Args:
-            name: Backend name
-            backend_class: Backend class (must inherit from StorageBackend)
+            storage_type: Storage type string
+            config: Configuration dictionary
+
+        Returns:
+            Storage backend instance
+
+        Raises:
+            ValueError: If storage type is not supported
         """
-        if not issubclass(backend_class, StorageBackend):
-            raise TypeError(f"{backend_class} must inherit from StorageBackend")
+        try:
+            type_enum = StorageType(storage_type)
+        except ValueError:
+            raise ValueError(f"Invalid storage type: {storage_type}")
 
-        cls._backends[name.lower()] = backend_class
+        if type_enum not in cls._backends:
+            raise ValueError(f"Unsupported storage type: {storage_type}")
 
-    @classmethod
-    def _load_config_from_env(cls, storage_type: str) -> Dict[str, Any]:
-        """Load configuration from environment variables"""
-        config = {}
-
-        if storage_type in ['bos', 'baidu']:
-            # BOS configuration
-            config['access_key'] = os.environ.get('BOS_AK') or os.environ.get('BOS_ACCESS_KEY')
-            config['secret_key'] = os.environ.get('BOS_SK') or os.environ.get('BOS_SECRET_KEY')
-            config['bucket'] = os.environ.get('BOS_BUCKET')
-            config['endpoint'] = os.environ.get('BOS_ENDPOINT', 'https://bj.bcebos.com')
-
-        elif storage_type in ['s3', 'aws']:
-            # S3 configuration
-            config['access_key_id'] = os.environ.get('AWS_ACCESS_KEY_ID')
-            config['secret_access_key'] = os.environ.get('AWS_SECRET_ACCESS_KEY')
-            config['bucket'] = os.environ.get('S3_BUCKET') or os.environ.get('AWS_S3_BUCKET')
-            config['region'] = os.environ.get('AWS_REGION', 'us-east-1')
-            config['endpoint_url'] = os.environ.get('S3_ENDPOINT_URL')
-
-        elif storage_type in ['filesystem', 'fs', 'local']:
-            # Filesystem configuration
-            config['base_path'] = os.environ.get('DEPLOY_TOOL_STORAGE_PATH')
-
-        return config
+        backend_class = cls._backends[type_enum]
+        return backend_class(config)
 
     @classmethod
-    def get_available_backends(cls) -> Dict[str, type]:
-        """Get all available storage backends"""
-        return cls._backends.copy()
+    def register_backend(cls, storage_type: StorageType, backend_class: Type[StorageBackend]):
+        """Register a new storage backend type
+
+        Args:
+            storage_type: Storage type enum
+            backend_class: Backend class
+        """
+        cls._backends[storage_type] = backend_class
+
+    @classmethod
+    def get_supported_types(cls) -> list[str]:
+        """Get list of supported storage types
+
+        Returns:
+            List of supported storage type names
+        """
+        return [st.value for st in cls._backends.keys()]
+
+    @classmethod
+    def is_supported(cls, storage_type: str) -> bool:
+        """Check if a storage type is supported
+
+        Args:
+            storage_type: Storage type string
+
+        Returns:
+            True if supported, False otherwise
+        """
+        try:
+            type_enum = StorageType(storage_type)
+            return type_enum in cls._backends
+        except ValueError:
+            return False

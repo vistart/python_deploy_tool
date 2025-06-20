@@ -1,12 +1,31 @@
-"""CLI decorators"""
+"""CLI decorators module"""
 
-from .dual_mode import dual_mode_command, expose_api
-from .project import require_project, ensure_no_project, with_project_defaults
+from .dual_mode import (
+    dual_mode_command,
+    interactive_option,
+    mode_specific,
+    validate_params
+)
+
+from .project import (
+    project_required,
+    project_optional,
+    find_project_root,
+    with_project_root,
+    ensure_project_structure
+)
 
 __all__ = [
-    'dual_mode_command',
-    'expose_api',
-    'require_project',
-    'ensure_no_project',
-    'with_project_defaults',
+    # Dual mode decorators
+    "dual_mode_command",
+    "interactive_option",
+    "mode_specific",
+    "validate_params",
+
+    # Project decorators
+    "project_required",
+    "project_optional",
+    "find_project_root",
+    "with_project_root",
+    "ensure_project_structure",
 ]

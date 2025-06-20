@@ -1,208 +1,352 @@
 """Pack command implementation"""
 
-import sys
 from pathlib import Path
+from typing import Optional
 
 import click
-from rich.console import Console
+from rich.prompt import Prompt, Confirm
 
-from ..decorators import require_project, dual_mode_command
-from ..utils.interactive import PackWizard
-from ..utils.output import format_pack_result, show_git_advice
-from ...api import Packer
-from ...api.exceptions import PackError, MissingTypeError, MissingVersionError
-from ...utils.async_utils import run_async
-
-console = Console()
+from ..decorators import dual_mode_command, project_required
+from ..utils.interactive import select_from_list
+from ..utils.output import console, create_progress, print_success, print_error
+from ...constants import (
+    EMOJI_SUCCESS,
+    EMOJI_WARNING,
+    EMOJI_PACKAGE
+)
+from ...core.path_resolver import PathResolver
+from ...services.package_service import PackageService, PackageConfig
 
 
 @click.command()
-@click.argument('source', type=click.Path(exists=True), required=False)
-@click.option('--type', 'package_type', help='Package type (required for auto mode)')
-@click.option('--version', help='Version number (required for auto mode)')
-@click.option('--auto', is_flag=True, help='Auto-generate config and pack')
-@click.option('--wizard', is_flag=True, help='Interactive wizard mode')
-@click.option('--config', type=click.Path(exists=True), help='Use existing config file')
-@click.option('--output', type=click.Path(), help='Output directory')
-@click.option('--compress', type=click.Choice(['gzip', 'bzip2', 'xz', 'lz4']),
-              default='gzip', help='Compression algorithm')
-@click.option('--level', type=click.IntRange(1, 9), default=6, help='Compression level')
-@click.option('--force', is_flag=True, help='Force overwrite existing files')
-@click.option('--save-config', is_flag=True, help='Save auto-generated config')
-@click.option('--dry-run', is_flag=True, help='Simulate without actual packing')
-@click.option('--batch', type=click.Path(exists=True), help='Batch pack config file')
-@click.pass_context
-@require_project
+@click.argument('source_path', required=False)
+@click.option(
+    '--type', '-t', 'component_type',
+    help='Component type (e.g., model, config, runtime)'
+)
+@click.option(
+    '--version', '-v',
+    help='Component version (e.g., 1.0.0)'
+)
+@click.option(
+    '--output', '-o',
+    type=click.Path(path_type=Path),
+    help='Output directory (default: dist/)'
+)
+@click.option(
+    '--compression', '-c',
+    type=click.Choice(['gzip', 'bzip2', 'xz', 'lz4', 'none']),
+    default='gzip',
+    help='Compression algorithm'
+)
+@click.option(
+    '--level', '-l',
+    type=click.IntRange(1, 9),
+    default=6,
+    help='Compression level (1-9)'
+)
+@click.option(
+    '--exclude', '-e',
+    multiple=True,
+    help='Exclude patterns (can be specified multiple times)'
+)
+@click.option(
+    '--auto', '-a',
+    is_flag=True,
+    help='Auto-generate package configuration'
+)
+@click.option(
+    '--yes', '-y',
+    is_flag=True,
+    help='Skip confirmation prompts'
+)
 @dual_mode_command
-def pack(ctx, source, package_type, version, auto, wizard, config, output,
-         compress, level, force, save_config, dry_run, batch):
-    """Pack files or directories into deployment packages
-
-    This command packages non-code resources like models, configs, and data
-    for deployment. Code files are managed through Git and don't need packing.
+@project_required
+async def pack(ctx, source_path, component_type, version, output, compression,
+               level, exclude, auto, yes):
+    """Package a component for deployment
 
     Examples:
-
-        # Interactive wizard mode (recommended for first time)
-        deploy-tool pack --wizard
-
-        # Auto mode with minimal input
-        deploy-tool pack ./models --auto --type model --version 1.0.0
-
-        # Use existing config file
-        deploy-tool pack --config deployment/package-configs/model-v1.yaml
-
-        # Batch processing
-        deploy-tool pack --batch deployment/batch-pack.yaml
-
-    Source Priority:
-        1. Command argument (e.g., ./models)
-        2. Config file source
-        3. Interactive selection
+        deploy-tool pack ./models --type model --version 1.0.0
+        deploy-tool pack ./configs --auto --type config --version 1.0.0
+        deploy-tool pack ./runtime -t runtime -v 3.10.0 -c xz -l 9
     """
-    try:
-        # Create packer instance
-        packer = Packer()
+    # Initialize services
+    path_resolver = PathResolver(ctx.project_root)
+    package_service = PackageService(path_resolver)
 
-        # Ensure we use relative paths
-        if source and Path(source).is_absolute():
-            # Convert absolute path to relative
-            project_root = ctx.obj.path_resolver.project_root
-            try:
-                rel_source = Path(source).relative_to(project_root)
-                source = str(rel_source)
-                console.print(f"[yellow]Converting to relative path: {source}[/yellow]")
-            except ValueError:
-                console.print(f"[red]Error: Source path '{source}' is outside project root[/red]")
-                console.print(f"[yellow]Project root: {project_root}[/yellow]")
-                console.print("[yellow]Please use a path within the project[/yellow]")
-                sys.exit(1)
-
-        # Handle different modes
-        if wizard:
-            # Interactive wizard mode - pass console, not path_resolver
-            wizard_obj = PackWizard(console)  # Fix: pass console instead of path_resolver
-            result = run_async(wizard_obj.run(initial_path=source))
-            if not result:
-                console.print("[yellow]Wizard cancelled[/yellow]")
-                sys.exit(0)
-
-            # Run packing with wizard result
-            pack_result = packer.pack(
-                source_path=result['source'],
-                package_type=result['type'],
-                version=result['version'],
-                output_path=result.get('output'),
-                compress=result.get('compress', compress),
-                level=result.get('level', level),
-                force=result.get('force', force),
-                save_config=result.get('save_config', save_config),
-                metadata=result.get('metadata', {})
-            )
-
-        elif batch:
-            # Batch mode
-            results = packer.pack_batch(batch)
-
-            # Display batch results
-            console.print(f"\n[green]Batch pack completed: {len(results)} packages[/green]")
-            for result in results:
-                if result.error:
-                    console.print(f"  [red]✗[/red] {result.source_path}: {result.error}")
-                else:
-                    console.print(f"  [green]✓[/green] {result.source_path}")
-
-            # Check if any failed
-            failed = [r for r in results if not r.success]
-            if failed:
-                sys.exit(1)
-            return
-
-        elif config:
-            # Config file mode
-            pack_result = packer.pack_with_config(
-                config_path=config,
-                version=version,  # Can override version
-                output_path=output,
-                force=force,
-                dry_run=dry_run
-            )
-
-        elif auto:
-            # Auto mode - validate required parameters
-            if not package_type:
-                raise MissingTypeError("--type is required for auto mode")
-            if not version:
-                raise MissingVersionError("--version is required for auto mode")
-
-            # Use source from argument or current directory
-            pack_source = source or '.'
-
-            # Run auto pack
-            pack_result = packer.auto_pack(
-                source_path=pack_source,
-                package_type=package_type,
-                version=version,
-                save_config=save_config,
-                compress=compress,
-                level=level,
-                force=force,
-                output_path=output
-            )
-
+    # Get source path
+    if not source_path:
+        if ctx.interactive:
+            source_path = await get_source_path_interactive(ctx.project)
+            if not source_path:
+                ctx.exit(0)
         else:
-            # Standard mode - need at least source
-            if not source:
-                console.print("[red]Error: SOURCE argument is required[/red]")
-                console.print("\nSpecify a source directory or file to pack:")
-                console.print("  deploy-tool pack ./models --type model --version 1.0.0")
-                console.print("\nOr use one of these modes:")
-                console.print("  --wizard   : Interactive mode (recommended)")
-                console.print("  --auto     : Auto mode with config generation")
-                console.print("  --config   : Use existing config file")
-                console.print("  --batch    : Batch processing")
-                sys.exit(1)
+            print_error("Source path required")
+            ctx.exit(1)
 
-            if not package_type:
-                console.print("[red]Error: --type is required[/red]")
-                console.print("\nSpecify the package type:")
-                console.print("  deploy-tool pack ./models --type model --version 1.0.0")
-                sys.exit(1)
+    # Resolve source path
+    source_path = path_resolver.resolve(source_path)
+    if not source_path.exists():
+        print_error(f"Source path not found: {source_path}")
+        ctx.exit(1)
 
+    # Get component type
+    if not component_type:
+        if ctx.interactive:
+            component_type = await get_component_type_interactive(ctx.project, source_path)
+            if not component_type:
+                ctx.exit(0)
+        else:
+            print_error("Component type required (use --type)")
+            ctx.exit(1)
+
+    # Get version
+    if not version:
+        if ctx.interactive:
+            version = await get_version_interactive(component_type)
             if not version:
-                console.print("[red]Error: --version is required[/red]")
-                console.print("\nSpecify the version:")
-                console.print("  deploy-tool pack ./models --type model --version 1.0.0")
-                sys.exit(1)
+                ctx.exit(0)
+        else:
+            print_error("Version required (use --version)")
+            ctx.exit(1)
 
-            # Standard pack
-            pack_result = packer.pack(
-                source_path=source,
-                package_type=package_type,
-                version=version,
-                output_path=output,
-                compress=compress,
-                level=level,
-                force=force,
-                save_config=save_config,
-                metadata={}
+    # Validate version format
+    if not validate_version_format(version):
+        print_error(f"Invalid version format: {version}")
+        console.print("Use semantic versioning format: MAJOR.MINOR.PATCH (e.g., 1.0.0)")
+        ctx.exit(1)
+
+    # Determine output directory
+    if not output:
+        output = ctx.project_root / "dist"
+
+    # Create package configuration
+    config = PackageConfig(
+        type=component_type,
+        version=version,
+        source_path=source_path,
+        output_path=output,
+        compression_algorithm=compression,
+        compression_level=level,
+        exclude_patterns=list(exclude) if exclude else None
+    )
+
+    # Show package plan
+    show_package_plan(config, auto)
+
+    # Confirm
+    if not yes and ctx.interactive:
+        if not Confirm.ask("\nProceed with packaging?"):
+            ctx.exit(0)
+
+    # Execute packaging
+    console.print(f"\n{EMOJI_PACKAGE} Packaging {component_type}:{version}...")
+
+    with create_progress() as progress:
+        task = progress.add_task(
+            f"Packaging {source_path.name}...",
+            total=None
+        )
+
+        # Package component
+        result = await package_service.package_component(
+            config=config,
+            progress_callback=lambda current, total: progress.update(
+                task,
+                completed=current,
+                total=total
             )
+        )
 
-        # Display results
-        format_pack_result(pack_result)
+    # Show results
+    if result.is_success:
+        print_success(f"Package created: {result.package_path}")
 
-        # Show git advice if needed
-        if pack_result.manifest_path and not dry_run:
-            show_git_advice(pack_result.manifest_path)
+        # Show package details
+        console.print(f"\n[bold]Package Details:[/bold]")
+        console.print(f"  Type: {result.component_type}")
+        console.print(f"  Version: {result.component_version}")
+        console.print(f"  Size: {format_size(result.package_size)}")
+        console.print(f"  Compression: {result.compression_algorithm}")
+        console.print(f"  Checksum: {result.checksum[:16]}...")
 
-        # Show portability reminder
-        console.print("\n[dim]💡 Tip: Always use relative paths for better portability across environments[/dim]")
+        if result.manifest_path:
+            console.print(f"  Manifest: {path_resolver.make_relative(result.manifest_path)}")
 
-    except (PackError, MissingTypeError, MissingVersionError) as e:
-        console.print(f"[red]Pack error: {e}[/red]")
-        sys.exit(1)
-    except Exception as e:
-        console.print(f"[red]Unexpected error: {e}[/red]")
-        if ctx.obj.debug:
-            console.print_exception()
-        sys.exit(1)
+        # Show next steps
+        console.print(f"\n{EMOJI_SUCCESS} Next steps:")
+        console.print(f"1. Review the package: tar -tzf {result.package_path} | head -20")
+        console.print(f"2. Publish the package: deploy-tool publish {component_type}:{version}")
+
+        # Git reminder
+        if result.manifest_path:
+            manifest_rel = path_resolver.make_relative(result.manifest_path)
+            console.print(f"\n{EMOJI_WARNING} Don't forget to commit the manifest:")
+            console.print(f"  git add {manifest_rel}")
+            console.print(f"  git commit -m \"Add {component_type} version {version}\"")
+
+    else:
+        print_error("Packaging failed!")
+        for error in result.errors:
+            print_error(f"  {error.message}")
+        ctx.exit(1)
+
+
+async def get_source_path_interactive(project) -> Optional[Path]:
+    """Get source path interactively"""
+
+    # Get defined components
+    component_types = project.config.get_component_types()
+
+    if component_types:
+        console.print("\n[bold]Select component to package:[/bold]")
+
+        # Add custom path option
+        choices = component_types + ["<custom path>"]
+
+        selected = select_from_list(
+            "Select source",
+            choices
+        )
+
+        if not selected:
+            return None
+
+        if selected == "<custom path>":
+            # Get custom path
+            path_str = Prompt.ask("Enter source path")
+            return Path(path_str) if path_str else None
+        else:
+            # Use component path
+            return project.config.get_component_path(selected)
+
+    else:
+        # No components defined, get custom path
+        path_str = Prompt.ask("\nEnter source path")
+        return Path(path_str) if path_str else None
+
+
+async def get_component_type_interactive(project, source_path: Path) -> Optional[str]:
+    """Get component type interactively"""
+
+    # Try to infer from path
+    path_name = source_path.name.lower()
+
+    # Common mappings
+    type_mappings = {
+        'models': 'model',
+        'model': 'model',
+        'configs': 'config',
+        'config': 'config',
+        'runtime': 'runtime',
+        'algorithm': 'algorithm',
+        'service': 'service',
+    }
+
+    suggested = type_mappings.get(path_name)
+
+    # Get defined component types
+    defined_types = project.config.get_component_types()
+
+    if defined_types:
+        console.print("\n[bold]Select component type:[/bold]")
+
+        # If we have a suggestion, make it the default
+        if suggested and suggested in defined_types:
+            default_idx = defined_types.index(suggested) + 1
+        else:
+            default_idx = 1
+
+        for i, comp_type in enumerate(defined_types, 1):
+            console.print(f"  {i}. {comp_type}")
+
+        console.print(f"  {len(defined_types) + 1}. <custom type>")
+
+        choice = Prompt.ask(
+            "Enter choice",
+            default=str(default_idx)
+        )
+
+        if not choice.isdigit():
+            return None
+
+        idx = int(choice) - 1
+        if idx < len(defined_types):
+            return defined_types[idx]
+        else:
+            # Custom type
+            return Prompt.ask("Enter custom component type")
+
+    else:
+        # No defined types, ask for custom
+        return Prompt.ask(
+            "\nEnter component type",
+            default=suggested
+        )
+
+
+async def get_version_interactive(component_type: str) -> Optional[str]:
+    """Get version interactively"""
+
+    console.print(f"\n[bold]Version for {component_type}:[/bold]")
+    console.print("Use semantic versioning: MAJOR.MINOR.PATCH")
+    console.print("Examples: 1.0.0, 2.1.3, 0.1.0-beta")
+
+    version = Prompt.ask(
+        "\nEnter version",
+        default="1.0.0"
+    )
+
+    return version
+
+
+def validate_version_format(version: str) -> bool:
+    """Validate version format"""
+
+    # Basic semantic versioning check
+    parts = version.split('.')
+    if len(parts) < 3:
+        return False
+
+    # Check major.minor.patch are numbers
+    try:
+        major = int(parts[0])
+        minor = int(parts[1])
+
+        # Handle patch with pre-release
+        patch_parts = parts[2].split('-')
+        patch = int(patch_parts[0])
+
+        return True
+    except ValueError:
+        return False
+
+
+def show_package_plan(config: PackageConfig, auto: bool) -> None:
+    """Show packaging plan"""
+
+    console.print(f"\n{EMOJI_PACKAGE} [bold]Package Plan[/bold]")
+    console.print(f"Source: {config.source_path}")
+    console.print(f"Component: {config.type}:{config.version}")
+    console.print(f"Output: {config.output_path}")
+    console.print(f"Compression: {config.compression_algorithm} (level {config.compression_level})")
+
+    if config.exclude_patterns:
+        console.print(f"\nExclude patterns:")
+        for pattern in config.exclude_patterns:
+            console.print(f"  - {pattern}")
+
+    if auto:
+        console.print(f"\n[yellow]Auto mode: Will scan directory and generate configuration[/yellow]")
+
+
+def format_size(size_bytes: int) -> str:
+    """Format file size for display"""
+
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if size_bytes < 1024.0:
+            return f"{size_bytes:.1f} {unit}"
+        size_bytes /= 1024.0
+
+    return f"{size_bytes:.1f} TB"

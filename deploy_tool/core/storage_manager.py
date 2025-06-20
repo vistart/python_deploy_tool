@@ -1,452 +1,198 @@
-"""Storage manager for abstracting storage operations"""
+"""Storage manager for handling multiple storage backends"""
 
-from abc import ABC, abstractmethod
-from pathlib import Path
-from typing import Optional, Dict, Any, List, Callable
+from typing import Dict, Optional, Any
+import asyncio
 
-from .path_resolver import PathResolver
-from ..constants import DEFAULT_STORAGE_TYPE, SUPPORTED_STORAGE_TYPES
-
-
-class StorageBackend(ABC):
-    """Abstract base class for storage backends"""
-
-    @abstractmethod
-    async def upload(self, local_path: Path, remote_path: str,
-                     callback: Optional[Callable[[int, int], None]] = None) -> bool:
-        """
-        Upload file to storage
-
-        Args:
-            local_path: Local file path
-            remote_path: Remote path
-            callback: Progress callback(bytes_uploaded, total_bytes)
-
-        Returns:
-            True if successful
-        """
-        pass
-
-    @abstractmethod
-    async def download(self, remote_path: str, local_path: Path,
-                       callback: Optional[Callable[[int, int], None]] = None) -> bool:
-        """
-        Download file from storage
-
-        Args:
-            remote_path: Remote path
-            local_path: Local file path
-            callback: Progress callback(bytes_downloaded, total_bytes)
-
-        Returns:
-            True if successful
-        """
-        pass
-
-    @abstractmethod
-    async def exists(self, remote_path: str) -> bool:
-        """
-        Check if file exists
-
-        Args:
-            remote_path: Remote path
-
-        Returns:
-            True if exists
-        """
-        pass
-
-    @abstractmethod
-    async def delete(self, remote_path: str) -> bool:
-        """
-        Delete file
-
-        Args:
-            remote_path: Remote path
-
-        Returns:
-            True if successful
-        """
-        pass
-
-    @abstractmethod
-    async def list(self, prefix: str) -> List[str]:
-        """
-        List files with prefix
-
-        Args:
-            prefix: Path prefix
-
-        Returns:
-            List of file paths
-        """
-        pass
-
-    @abstractmethod
-    async def get_metadata(self, remote_path: str) -> Optional[Dict[str, Any]]:
-        """
-        Get file metadata
-
-        Args:
-            remote_path: Remote path
-
-        Returns:
-            Metadata dictionary or None
-        """
-        pass
-
-
-class StoragePathResolver:
-    """Storage path resolution helper"""
-
-    @staticmethod
-    def get_component_path(package_type: str, version: str) -> str:
-        """
-        Get component storage path
-
-        Args:
-            package_type: Package type
-            version: Version string
-
-        Returns:
-            Storage path
-        """
-        return f"{package_type}/{version}/"
-
-    @staticmethod
-    def get_archive_path(package_type: str, version: str, filename: str) -> str:
-        """
-        Get archive storage path
-
-        Args:
-            package_type: Package type
-            version: Version string
-            filename: Archive filename
-
-        Returns:
-            Storage path
-        """
-        return f"{package_type}/{version}/{filename}"
-
-    @staticmethod
-    def get_manifest_path(package_type: str, version: str) -> str:
-        """
-        Get manifest storage path
-
-        Args:
-            package_type: Package type
-            version: Version string
-
-        Returns:
-            Storage path
-        """
-        return f"{package_type}/{version}/{package_type}-{version}.manifest.json"
-
-    @staticmethod
-    def get_release_path(release_version: str) -> str:
-        """
-        Get release storage path
-
-        Args:
-            release_version: Release version
-
-        Returns:
-            Storage path
-        """
-        return f"releases/{release_version}.release.json"
+from ..storage import StorageBackend, StorageFactory
+from ..models.config import Config, PublishTarget
+from ..cli.utils.output import console
+from ..constants import EMOJI_WARNING
 
 
 class StorageManager:
-    """Unified storage manager"""
+    """Manages multiple storage backend instances"""
 
-    def __init__(self,
-                 storage_type: str = DEFAULT_STORAGE_TYPE,
-                 config: Optional[Dict[str, Any]] = None,
-                 path_resolver: Optional[PathResolver] = None):
-        """
-        Initialize storage manager
+    def __init__(self, config: Config):
+        """Initialize storage manager
 
         Args:
-            storage_type: Type of storage backend
-            config: Storage configuration
-            path_resolver: Path resolver instance
+            config: Project configuration
         """
-        self.storage_type = storage_type
-        self.config = config or {}
-        self.path_resolver = path_resolver or PathResolver()
-        self._backend: Optional[StorageBackend] = None
-        self._path_helper = StoragePathResolver()
+        self.config = config
+        self._storages: Dict[str, StorageBackend] = {}
+        self._storage_configs: Dict[str, PublishTarget] = {}
 
-    @property
-    def backend(self) -> StorageBackend:
-        """Get storage backend (lazy initialization)"""
-        if self._backend is None:
-            self._backend = self._create_backend()
-        return self._backend
+        # Load all configured targets
+        for name, target in config.publish_targets.items():
+            if target.enabled:
+                self._storage_configs[name] = target
 
-    def _create_backend(self) -> StorageBackend:
-        """Create storage backend instance"""
-        if self.storage_type not in SUPPORTED_STORAGE_TYPES:
-            raise ValueError(f"Unsupported storage type: {self.storage_type}")
-
-        if self.storage_type == "filesystem":
-            from ..storage.filesystem import FileSystemStorage
-            return FileSystemStorage(self.config, self.path_resolver)
-        elif self.storage_type == "bos":
-            from ..storage.bos import BOSStorage
-            return BOSStorage(self.config)
-        elif self.storage_type == "s3":
-            from ..storage.s3 import S3Storage
-            return S3Storage(self.config)
-        else:
-            raise ValueError(f"Storage type not implemented: {self.storage_type}")
-
-    async def upload_component(self,
-                               local_path: Path,
-                               package_type: str,
-                               version: str,
-                               callback: Optional[Callable[[int, int], None]] = None) -> str:
-        """
-        Upload component to storage
+    def get_storage(self, name: str) -> StorageBackend:
+        """Get or create storage backend instance
 
         Args:
-            local_path: Local file path
-            package_type: Package type
-            version: Version string
-            callback: Progress callback
+            name: Storage target name
 
         Returns:
-            Remote storage path
+            Storage backend instance
+
+        Raises:
+            ValueError: If storage target not found or disabled
         """
-        filename = local_path.name
-        remote_path = self._path_helper.get_archive_path(package_type, version, filename)
+        # Check if already created
+        if name in self._storages:
+            return self._storages[name]
 
-        success = await self.backend.upload(local_path, remote_path, callback)
-        if not success:
-            raise RuntimeError(f"Failed to upload {local_path} to {remote_path}")
+        # Check if target exists
+        if name not in self._storage_configs:
+            raise ValueError(f"Storage target '{name}' not found or disabled")
 
-        return remote_path
+        # Create storage backend
+        target = self._storage_configs[name]
 
-    async def download_component(self,
-                                 package_type: str,
-                                 version: str,
-                                 filename: str,
-                                 local_path: Path,
-                                 callback: Optional[Callable[[int, int], None]] = None) -> bool:
-        """
-        Download component from storage
+        try:
+            storage = StorageFactory.create_from_config(target)
+            self._storages[name] = storage
+            return storage
+
+        except Exception as e:
+            raise ValueError(f"Failed to create storage backend '{name}': {str(e)}")
+
+    async def test_storage(self, name: str) -> bool:
+        """Test storage backend connectivity
 
         Args:
-            package_type: Package type
-            version: Version string
-            filename: Archive filename
-            local_path: Local destination path
-            callback: Progress callback
+            name: Storage target name
 
         Returns:
-            True if successful
+            True if connection successful
         """
-        remote_path = self._path_helper.get_archive_path(package_type, version, filename)
+        try:
+            storage = self.get_storage(name)
 
-        # Ensure local directory exists
-        local_path.parent.mkdir(parents=True, exist_ok=True)
+            # Simple connectivity test - try to list with non-existent prefix
+            test_prefix = f"__deploy_tool_test_{name}__"
+            await storage.list_objects(prefix=test_prefix, max_keys=1)
 
-        return await self.backend.download(remote_path, local_path, callback)
+            return True
 
-    async def upload_manifest(self,
-                              manifest_path: Path,
-                              package_type: str,
-                              version: str) -> str:
+        except Exception as e:
+            console.print(f"{EMOJI_WARNING} Storage test failed for '{name}': {str(e)}")
+            return False
+
+    async def test_all_storages(self) -> Dict[str, bool]:
+        """Test all configured storage backends
+
+        Returns:
+            Dict mapping storage name to test result
         """
-        Upload manifest to storage
+        results = {}
+
+        # Test each storage in parallel
+        tasks = []
+        for name in self._storage_configs:
+            task = self.test_storage(name)
+            tasks.append((name, task))
+
+        for name, task in tasks:
+            try:
+                results[name] = await task
+            except Exception:
+                results[name] = False
+
+        return results
+
+    def list_storages(self) -> Dict[str, Dict[str, Any]]:
+        """List all configured storage targets
+
+        Returns:
+            Dict of storage information
+        """
+        storages = {}
+
+        for name, target in self._storage_configs.items():
+            storages[name] = {
+                "type": target.type,
+                "enabled": target.enabled,
+                "display_info": target.get_display_info(),
+                "is_remote": target.is_remote,
+                "requires_transfer": target.requires_transfer,
+                "description": target.description
+            }
+
+        return storages
+
+    def get_storage_config(self, name: str) -> Optional[PublishTarget]:
+        """Get storage target configuration
 
         Args:
-            manifest_path: Local manifest path
-            package_type: Package type
-            version: Version string
+            name: Storage target name
 
         Returns:
-            Remote storage path
+            PublishTarget configuration or None
         """
-        remote_path = self._path_helper.get_manifest_path(package_type, version)
+        return self._storage_configs.get(name)
 
-        success = await self.backend.upload(manifest_path, remote_path)
-        if not success:
-            raise RuntimeError(f"Failed to upload manifest to {remote_path}")
-
-        return remote_path
-
-    async def download_manifest(self,
-                                package_type: str,
-                                version: str,
-                                local_path: Path) -> bool:
-        """
-        Download manifest from storage
-
-        Args:
-            package_type: Package type
-            version: Version string
-            local_path: Local destination path
+    def get_enabled_storages(self) -> list[str]:
+        """Get list of enabled storage names
 
         Returns:
-            True if successful
+            List of enabled storage target names
         """
-        remote_path = self._path_helper.get_manifest_path(package_type, version)
+        return list(self._storage_configs.keys())
 
-        # Ensure local directory exists
-        local_path.parent.mkdir(parents=True, exist_ok=True)
-
-        return await self.backend.download(remote_path, local_path)
-
-    async def upload_release(self,
-                             release_path: Path,
-                             release_version: str) -> str:
-        """
-        Upload release manifest to storage
-
-        Args:
-            release_path: Local release manifest path
-            release_version: Release version
+    def get_default_storages(self) -> list[str]:
+        """Get list of default storage names
 
         Returns:
-            Remote storage path
+            List of default storage target names
         """
-        remote_path = self._path_helper.get_release_path(release_version)
+        defaults = []
+        for name in self.config.default_targets:
+            if name in self._storage_configs:
+                defaults.append(name)
+        return defaults
 
-        success = await self.backend.upload(release_path, remote_path)
-        if not success:
-            raise RuntimeError(f"Failed to upload release to {remote_path}")
-
-        return remote_path
-
-    async def download_release(self,
-                               release_version: str,
-                               local_path: Path) -> bool:
-        """
-        Download release manifest from storage
-
-        Args:
-            release_version: Release version
-            local_path: Local destination path
+    def get_remote_storages(self) -> list[str]:
+        """Get list of remote storage names
 
         Returns:
-            True if successful
+            List of remote storage target names
         """
-        remote_path = self._path_helper.get_release_path(release_version)
+        remotes = []
+        for name, target in self._storage_configs.items():
+            if target.is_remote:
+                remotes.append(name)
+        return remotes
 
-        # Ensure local directory exists
-        local_path.parent.mkdir(parents=True, exist_ok=True)
-
-        return await self.backend.download(remote_path, local_path)
-
-    async def list_components(self, package_type: Optional[str] = None) -> List[Dict[str, str]]:
-        """
-        List available components
-
-        Args:
-            package_type: Filter by package type (optional)
+    def get_filesystem_storages(self) -> list[str]:
+        """Get list of filesystem storage names
 
         Returns:
-            List of component info dicts
+            List of filesystem storage target names
         """
-        prefix = f"{package_type}/" if package_type else ""
-        paths = await self.backend.list(prefix)
+        filesystems = []
+        for name, target in self._storage_configs.items():
+            if not target.is_remote:
+                filesystems.append(name)
+        return filesystems
 
-        components = []
-        seen = set()
+    async def close_all(self) -> None:
+        """Close all storage connections"""
+        tasks = []
 
-        for path in paths:
-            # Extract component info from path
-            parts = path.split('/')
-            if len(parts) >= 2:
-                comp_type = parts[0]
-                version = parts[1]
+        for storage in self._storages.values():
+            tasks.append(storage.close())
 
-                key = f"{comp_type}:{version}"
-                if key not in seen:
-                    seen.add(key)
-                    components.append({
-                        'type': comp_type,
-                        'version': version,
-                        'path': f"{comp_type}/{version}/"
-                    })
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
-        return sorted(components, key=lambda x: (x['type'], x['version']))
+        self._storages.clear()
 
-    async def list_releases(self) -> List[str]:
-        """
-        List available releases
+    async def __aenter__(self):
+        """Context manager entry"""
+        return self
 
-        Returns:
-            List of release versions
-        """
-        paths = await self.backend.list("releases/")
-
-        releases = []
-        for path in paths:
-            if path.endswith('.release.json'):
-                # Extract version from filename
-                filename = path.split('/')[-1]
-                version = filename.replace('.release.json', '')
-                releases.append(version)
-
-        return sorted(releases)
-
-    async def component_exists(self, package_type: str, version: str) -> bool:
-        """
-        Check if component exists
-
-        Args:
-            package_type: Package type
-            version: Version string
-
-        Returns:
-            True if exists
-        """
-        # Check if manifest exists
-        manifest_path = self._path_helper.get_manifest_path(package_type, version)
-        return await self.backend.exists(manifest_path)
-
-    async def release_exists(self, release_version: str) -> bool:
-        """
-        Check if release exists
-
-        Args:
-            release_version: Release version
-
-        Returns:
-            True if exists
-        """
-        release_path = self._path_helper.get_release_path(release_version)
-        return await self.backend.exists(release_path)
-
-    async def delete_component(self, package_type: str, version: str) -> bool:
-        """
-        Delete component from storage
-
-        Args:
-            package_type: Package type
-            version: Version string
-
-        Returns:
-            True if successful
-        """
-        # List all files for this component
-        prefix = self._path_helper.get_component_path(package_type, version)
-        files = await self.backend.list(prefix)
-
-        # Delete all files
-        success = True
-        for file_path in files:
-            if not await self.backend.delete(file_path):
-                success = False
-
-        return success
-
-    def get_storage_info(self) -> Dict[str, Any]:
-        """Get storage configuration info"""
-        return {
-            'type': self.storage_type,
-            'config': {k: v for k, v in self.config.items() if not k.endswith('_key')},
-            'supported_types': SUPPORTED_STORAGE_TYPES
-        }
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit"""
+        await self.close_all()

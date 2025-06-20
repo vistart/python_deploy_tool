@@ -5,12 +5,15 @@ from .file_utils import (
     calculate_file_checksum,
     calculate_file_hash,
     get_file_size,
+    ensure_directory,
+    safe_remove,
     format_size,
     format_bytes,
     is_binary_file,
     count_files,
     scan_directory,
     copy_with_progress,
+<<<<<<< Updated upstream
     safe_remove,
     ensure_parent_dir,
     get_relative_paths,
@@ -31,6 +34,16 @@ from .file_utils import (
     list_directory_tree,
     compare_directories,
     find_duplicate_files,
+=======
+    create_archive,
+    create_temp_directory,
+    extract_archive,
+    find_files,
+    get_relative_paths,
+    atomic_write,
+    read_file_lines,
+    get_directory_size,
+>>>>>>> Stashed changes
 )
 
 from .git_utils import (

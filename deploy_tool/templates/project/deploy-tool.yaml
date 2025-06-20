@@ -1,81 +1,122 @@
 # Deploy Tool Project Configuration
-# This file identifies the project root and contains project-specific settings
-
 version: "1.0"
 
-# Project information
 project:
-  name: "${project_name}"
-  type: "${project_type}"  # algorithm, model, service, general
-  description: "${project_description}"
+  name: "${PROJECT_NAME}"
+  root: "${PROJECT_ROOT}"
+  description: "${PROJECT_DESCRIPTION}"
 
-# Path configuration (optional - these are the defaults)
-paths:
-  deployment: "./deployment"
-  manifests: "./deployment/manifests"
-  releases: "./deployment/releases"
-  configs: "./deployment/package-configs"
-  dist: "./dist"
-  cache: "./.deploy-tool-cache"
+# Component definitions
+components:
+  model:
+    path: ./models
+    description: "Machine learning models"
 
-# Default settings for operations
-defaults:
-  # Compression settings
+  config:
+    path: ./configs
+    description: "Configuration files"
+
+  runtime:
+    path: ./runtime
+    description: "Runtime environment"
+
+# Packaging defaults
+packaging:
   compression:
-    algorithm: "gzip"  # gzip, bzip2, xz, lz4
-    level: 6          # 1-9
+    algorithm: gzip  # Options: gzip, bzip2, xz, lz4
+    level: 6        # 1-9, higher = better compression
 
-  # Storage backend
-  storage:
-    type: "filesystem"  # filesystem, bos, s3
-    # Additional storage config can be added here
-    # For BOS:
-    # bucket: "${BOS_BUCKET}"
-    # endpoint: "https://bj.bcebos.com"
+  exclude_patterns:
+    - "*.log"
+    - "__pycache__/"
+    - ".DS_Store"
+    - ".git/"
+    - "*.tmp"
+    - "*.cache"
 
-# Environment-specific overrides (optional)
-environments:
-  development:
-    paths:
-      dist: "./dist-dev"
-    defaults:
-      compression:
-        level: 3  # Faster compression for dev
+# Publish configuration
+publish:
+  # Default targets for publish operations
+  default_targets:
+    - local-primary
 
-  staging:
-    storage:
-      type: "bos"
-      bucket: "staging-packages"
+  # Available publish targets
+  targets:
+    local-primary:
+      type: filesystem
+      path: /data/packages
+      description: "Primary local storage"
 
-  production:
-    storage:
-      type: "bos"
-      bucket: "prod-packages"
-    defaults:
-      compression:
-        algorithm: "xz"  # Better compression for production
-        level: 9
+    local-backup:
+      type: filesystem
+      path: /backup/packages
+      description: "Backup local storage"
 
-# Plugin configuration (optional)
-plugins:
-  # Git integration
-  git-integration:
+    bos-beijing:
+      type: bos
+      endpoint: bj.bcebos.com
+      bucket: ml-artifacts
+      access_key: ${BOS_AK}
+      secret_key: ${BOS_SK}
+      description: "Beijing BOS storage"
+
+    s3-us-west:
+      type: s3
+      region: us-west-2
+      bucket: ml-artifacts
+      access_key: ${AWS_ACCESS_KEY_ID}
+      secret_key: ${AWS_SECRET_ACCESS_KEY}
+      description: "AWS S3 storage"
+
+# Deployment configuration
+deploy:
+  # Deployment root directory
+  root: ${DEPLOY_ROOT:/opt/deployments}
+
+  # Source priority for deployment
+  source_priority:
+    - local-primary
+    - local-backup
+    - bos-beijing
+    - s3-us-west
+
+  # Failover configuration
+  failover:
     enabled: true
+    retry_count: 3
+    retry_delay: 5  # seconds
+    backoff_multiplier: 2  # exponential backoff
 
-  # Caching
-  cache:
-    enabled: true
-    ttl_seconds: 3600
-    max_size_mb: 100
+  # Version retention policy
+  retention:
+    keep_versions: 5  # Keep last N versions
+    keep_days: 30     # Keep versions newer than N days
+    keep_tagged: true # Always keep tagged versions
 
-  # Lifecycle hooks
-  lifecycle-hooks:
-    enabled: false
-    hooks_dir: ".deploy-tool/hooks"
-    timeout: 300
+  # Custom link mappings (optional)
+  custom_links:
+    # Application expected path -> Deployment link path
+    # /app/models: /opt/deployments/links/model
+    # /app/configs: /opt/deployments/links/config
 
-# Custom metadata (optional)
-metadata:
-  team: "${team_name}"
-  contact: "${contact_email}"
-  repository: "${git_repository}"
+# Cache configuration
+cache:
+  enabled: true
+  directory: ${DEPLOY_TOOL_CACHE:.deploy-tool-cache}
+  max_size: 10GB
+  ttl: 7d  # Cache time-to-live
+
+# Hooks (optional)
+hooks:
+  pre_pack: []      # Commands to run before packaging
+  post_pack: []     # Commands to run after packaging
+  pre_publish: []   # Commands to run before publishing
+  post_publish: []  # Commands to run after publishing
+  pre_deploy: []    # Commands to run before deployment
+  post_deploy: []   # Commands to run after deployment
+
+# Logging
+logging:
+  level: ${DEPLOY_TOOL_LOG_LEVEL:INFO}
+  file: ${DEPLOY_TOOL_LOG_FILE:}
+  format: "%(asctime)s [%(levelname)s] %(message)s"

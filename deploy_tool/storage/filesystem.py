@@ -1,17 +1,18 @@
-"""Local filesystem storage backend"""
+"""Filesystem storage backend implementation"""
 
+import asyncio
+import os
 import shutil
-from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Callable
 
-import aiofiles
-import aiofiles.os
-
 from .base import StorageBackend
-from ..constants import DEFAULT_CHUNK_SIZE
 from ..core.path_resolver import PathResolver
-from ..utils.hash_utils import calculate_file_hash_async
+from ..utils.file_utils import (
+    copy_with_progress,
+    calculate_file_hash,
+    get_file_metadata
+)
 
 
 class FileSystemStorage(StorageBackend):
@@ -22,55 +23,79 @@ class FileSystemStorage(StorageBackend):
         Initialize filesystem storage
 
         Args:
-            config: Configuration with optional 'base_path'
+            config: Configuration including:
+                - base_path: Base storage path (optional)
             path_resolver: Path resolver instance
         """
         super().__init__(config)
         self.path_resolver = path_resolver or PathResolver()
 
-        # Base path for storage (defaults to project's dist directory)
-        if 'base_path' in self.config:
-            self.base_path = Path(self.config['base_path']).resolve()
+        # Determine base path for published files
+        base_path = config.get('base_path') if config else None
+        if base_path:
+            self.base_path = Path(base_path)
         else:
-            # Use get_dist_dir() method instead of dist_dir attribute
-            self.base_path = self.path_resolver.get_dist_dir()
+<<<<<<< HEAD
+            # Default to deployment/published within project
+            self.base_path = self.path_resolver.project_root / "deployment" / "published"
+=======
+            self.base_path = self.path_resolver.dist_dir
+>>>>>>> parent of ea5206d (Refactor deployment logic to simplify component handling; improve error messages and enhance verification process)
 
     async def _do_initialize(self) -> None:
-        """Initialize filesystem storage"""
-        # Ensure base directory exists
+        """Initialize filesystem storage (ensure directories exist)"""
+        # Ensure base path exists
         self.base_path.mkdir(parents=True, exist_ok=True)
-
-    def _get_full_path(self, remote_path: str) -> Path:
-        """Convert remote path to full local path"""
-        # Remove leading slash if present
-        remote_path = remote_path.lstrip('/')
-        return self.base_path / remote_path
 
     async def upload(self,
                      local_path: Path,
                      remote_path: str,
                      callback: Optional[Callable[[int, int], None]] = None) -> bool:
+<<<<<<< HEAD
         """
-        Upload file to storage
+        Copy file to storage location
 
         Args:
             local_path: Local file path
-            remote_path: Remote storage path
+            remote_path: Remote storage path (relative to base_path)
             callback: Progress callback
 
         Returns:
             True if successful
         """
-        if not local_path.exists():
-            return False
-
-        full_path = self._get_full_path(remote_path)
-        full_path.parent.mkdir(parents=True, exist_ok=True)
-
         try:
+            # Ensure storage is initialized
+            await self.initialize()
+
+            # Convert remote path to absolute path
+            target_path = self.base_path / remote_path
+
+            # Ensure target directory exists
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Copy file with progress
+            await asyncio.get_event_loop().run_in_executor(
+                None,
+                copy_with_progress,
+                local_path,
+                target_path,
+                callback
+            )
+=======
+        """Upload file to filesystem storage"""
+        try:
+            await self.initialize()
+
+            local_path = Path(local_path)
+            if not local_path.exists():
+                return False
+
+            full_path = self._get_full_path(remote_path)
+            full_path.parent.mkdir(parents=True, exist_ok=True)
+
             # Get file size for progress
-            file_size = local_path.stat().st_size
-            bytes_copied = 0
+            total_size = local_path.stat().st_size
+            bytes_transferred = 0
 
             # Copy with progress
             async with aiofiles.open(local_path, 'rb') as src:
@@ -79,40 +104,73 @@ class FileSystemStorage(StorageBackend):
                         chunk = await src.read(DEFAULT_CHUNK_SIZE)
                         if not chunk:
                             break
+
                         await dst.write(chunk)
-                        bytes_copied += len(chunk)
+                        bytes_transferred += len(chunk)
+
                         if callback:
-                            callback(bytes_copied, file_size)
+                            callback(bytes_transferred, total_size)
+>>>>>>> parent of ea5206d (Refactor deployment logic to simplify component handling; improve error messages and enhance verification process)
 
             return True
-        except Exception:
+
+        except Exception as e:
+            import logging
+            logging.error(f"Upload failed: {e}")
             return False
 
     async def download(self,
                        remote_path: str,
                        local_path: Path,
                        callback: Optional[Callable[[int, int], None]] = None) -> bool:
+<<<<<<< HEAD
         """
-        Download file from storage
+        Copy file from storage location
 
         Args:
-            remote_path: Remote storage path
-            local_path: Local file path
+            remote_path: Remote path (relative to base_path)
+            local_path: Local file path to save to
             callback: Progress callback
 
         Returns:
             True if successful
         """
-        full_path = self._get_full_path(remote_path)
-        if not full_path.exists():
-            return False
-
-        local_path.parent.mkdir(parents=True, exist_ok=True)
-
         try:
+            # Ensure storage is initialized
+            await self.initialize()
+
+            # Convert remote path to absolute path
+            source_path = self.base_path / remote_path
+
+            if not source_path.exists():
+                return False
+
+            # Ensure local directory exists
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Copy file with progress
+            await asyncio.get_event_loop().run_in_executor(
+                None,
+                copy_with_progress,
+                source_path,
+                local_path,
+                callback
+            )
+=======
+        """Download file from filesystem storage"""
+        try:
+            await self.initialize()
+
+            full_path = self._get_full_path(remote_path)
+            if not full_path.exists():
+                return False
+
+            local_path = Path(local_path)
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+
             # Get file size for progress
-            file_size = full_path.stat().st_size
-            bytes_copied = 0
+            total_size = full_path.stat().st_size
+            bytes_transferred = 0
 
             # Copy with progress
             async with aiofiles.open(full_path, 'rb') as src:
@@ -121,136 +179,253 @@ class FileSystemStorage(StorageBackend):
                         chunk = await src.read(DEFAULT_CHUNK_SIZE)
                         if not chunk:
                             break
+
                         await dst.write(chunk)
-                        bytes_copied += len(chunk)
+                        bytes_transferred += len(chunk)
+
                         if callback:
-                            callback(bytes_copied, file_size)
+                            callback(bytes_transferred, total_size)
+>>>>>>> parent of ea5206d (Refactor deployment logic to simplify component handling; improve error messages and enhance verification process)
 
             return True
-        except Exception:
+
+        except Exception as e:
+            import logging
+            logging.error(f"Download failed: {e}")
             return False
 
     async def exists(self, remote_path: str) -> bool:
+<<<<<<< HEAD
         """
         Check if file exists in storage
 
         Args:
-            remote_path: Remote storage path
+            remote_path: Remote path to check
 
         Returns:
-            True if exists
+            True if file exists
         """
+        # Ensure storage is initialized
+        await self.initialize()
+
+        target_path = self.base_path / remote_path
+        return target_path.exists()
+=======
+        """Check if file exists"""
+        await self.initialize()
         full_path = self._get_full_path(remote_path)
         return full_path.exists()
+>>>>>>> parent of ea5206d (Refactor deployment logic to simplify component handling; improve error messages and enhance verification process)
 
     async def delete(self, remote_path: str) -> bool:
-        """
-        Delete file from storage
+        """Delete file"""
+        try:
+            await self.initialize()
+            full_path = self._get_full_path(remote_path)
 
+<<<<<<< HEAD
         Args:
-            remote_path: Remote storage path
+            remote_path: Remote path to delete
 
         Returns:
             True if successful
         """
-        full_path = self._get_full_path(remote_path)
-        if not full_path.exists():
+        try:
+            # Ensure storage is initialized
+            await self.initialize()
+
+            target_path = self.base_path / remote_path
+
+            if target_path.exists():
+                if target_path.is_file():
+                    target_path.unlink()
+                elif target_path.is_dir():
+                    shutil.rmtree(target_path)
+                return True
+
+=======
+            if full_path.exists():
+                if full_path.is_dir():
+                    shutil.rmtree(full_path)
+                else:
+                    full_path.unlink()
+                return True
+
+>>>>>>> parent of ea5206d (Refactor deployment logic to simplify component handling; improve error messages and enhance verification process)
             return False
 
-        try:
-            if full_path.is_dir():
-                shutil.rmtree(full_path)
-            else:
-                full_path.unlink()
-            return True
-        except Exception:
+        except Exception as e:
+            import logging
+            logging.error(f"Delete failed: {e}")
             return False
 
     async def list(self, prefix: str = "") -> List[str]:
+<<<<<<< HEAD
         """
-        List files in storage
+        List files in storage with given prefix
 
         Args:
-            prefix: Path prefix to filter results
+            prefix: Path prefix to filter by
 
         Returns:
-            List of file paths
+            List of file paths relative to base_path
         """
+        # Ensure storage is initialized
+        await self.initialize()
+
+        search_path = self.base_path / prefix
+        files = []
+=======
+        """List files with prefix"""
+        await self.initialize()
+
         search_path = self._get_full_path(prefix)
         results = []
 
         if search_path.exists():
             if search_path.is_dir():
-                # List all files recursively
-                for item in search_path.rglob('*'):
+                # List all files in directory
+                for item in search_path.rglob("*"):
                     if item.is_file():
-                        # Get relative path from base
-                        try:
-                            rel_path = item.relative_to(self.base_path)
-                            results.append(str(rel_path))
-                        except ValueError:
-                            pass
+                        # Convert to relative path
+                        relative = item.relative_to(self.base_path)
+                        results.append(str(relative).replace("\\", "/"))
             elif search_path.is_file():
                 # Single file
-                try:
-                    rel_path = search_path.relative_to(self.base_path)
-                    results.append(str(rel_path))
-                except ValueError:
-                    pass
+                relative = search_path.relative_to(self.base_path)
+                results.append(str(relative).replace("\\", "/"))
+>>>>>>> parent of ea5206d (Refactor deployment logic to simplify component handling; improve error messages and enhance verification process)
 
-        return sorted(results)
+        if search_path.exists() and search_path.is_dir():
+            for path in search_path.rglob("*"):
+                if path.is_file():
+                    # Return relative paths
+                    relative_path = path.relative_to(self.base_path)
+                    files.append(str(relative_path))
+
+        return sorted(files)
 
     async def get_metadata(self, remote_path: str) -> Optional[Dict[str, Any]]:
-        """
-        Get file metadata
+        """Get file metadata"""
+        await self.initialize()
 
+<<<<<<< HEAD
         Args:
-            remote_path: Remote storage path
+            remote_path: Remote path
 
         Returns:
-            File metadata or None if not found
+            Metadata dictionary or None if not found
         """
+        # Ensure storage is initialized
+        await self.initialize()
+
+        target_path = self.base_path / remote_path
+
+        if not target_path.exists():
+            return None
+
+        # Get basic file metadata
+        stat = target_path.stat()
+
+        metadata = {
+            'size': stat.st_size,
+            'modified': stat.st_mtime,
+            'created': stat.st_ctime,
+            'mode': stat.st_mode,
+            'is_file': target_path.is_file(),
+            'is_dir': target_path.is_dir(),
+        }
+
+        # Calculate checksum for files
+        if target_path.is_file():
+            try:
+                metadata['checksum'] = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    calculate_file_hash,
+                    target_path
+                )
+            except Exception:
+                pass
+
+        return metadata
+
+    def get_post_publish_instructions(self,
+                                      release_version: str,
+                                      published_path: Path) -> List[str]:
+        """
+        Get filesystem-specific post-publish instructions
+
+        Args:
+            release_version: Version that was published
+            published_path: Local path where files were published
+
+        Returns:
+            List of instruction strings for the user
+        """
+        instructions = [
+            "✅ Components published to local filesystem!",
+            "",
+            f"Location: {self.base_path}",
+            f"Release: {release_version}",
+            "",
+            "📋 Next steps:",
+            "",
+            "1. Add release manifest to Git:",
+            f"   git add deployment/releases/{release_version}.release.json",
+            f"   git commit -m \"Release version {release_version}\"",
+            "   git push",
+            "",
+            "2. Transfer published files to deployment server:",
+            "",
+            "   Option A - Using rsync (recommended):",
+            f"   rsync -avz --progress \\",
+            f"     {self.base_path}/ \\",
+            f"     user@server:/opt/deployments/",
+            "",
+            "   Option B - Using scp:",
+            f"   scp -r {self.base_path}/* \\",
+            f"     user@server:/opt/deployments/",
+            "",
+            "3. Deploy on target server:",
+            f"   deploy-tool deploy \\",
+            f"     --release {release_version} \\",
+            f"     --target /opt/ml-apps/my-project \\",
+            f"     --method local",
+            "",
+            "💡 Tip: Consider using cloud storage (S3/BOS) for easier deployment."
+        ]
+
+        return instructions
+
+    async def _do_close(self) -> None:
+        """Close filesystem storage (no-op for filesystem)"""
+        pass
+=======
         full_path = self._get_full_path(remote_path)
         if not full_path.exists():
             return None
 
         stat = full_path.stat()
+
+        # Calculate checksum
+        checksum = None
+        if full_path.is_file():
+            checksum = await calculate_file_hash_async(full_path)
+
         return {
+            'path': remote_path,
             'size': stat.st_size,
             'modified': datetime.fromtimestamp(stat.st_mtime).isoformat(),
             'created': datetime.fromtimestamp(stat.st_ctime).isoformat(),
             'is_dir': full_path.is_dir(),
-            'checksum': await calculate_file_hash_async(full_path) if full_path.is_file() else None,
+            'checksum': checksum
         }
 
-    # Storage-specific methods
-    async def get_free_space(self) -> int:
-        """Get free space in bytes"""
-        import shutil
-        stat = shutil.disk_usage(self.base_path)
-        return stat.free
+    async def _do_close(self) -> None:
+        """No cleanup needed for filesystem storage"""
+        pass
 
-    async def cleanup_old_files(self, days: int = 30) -> int:
-        """
-        Clean up files older than specified days
-
-        Args:
-            days: Number of days
-
-        Returns:
-            Number of files deleted
-        """
-        import time
-        deleted = 0
-        cutoff_time = time.time() - (days * 24 * 60 * 60)
-
-        for item in self.base_path.rglob('*'):
-            if item.is_file():
-                if item.stat().st_mtime < cutoff_time:
-                    try:
-                        item.unlink()
-                        deleted += 1
-                    except Exception:
-                        pass
-
-        return deleted
+    def get_local_path(self, remote_path: str) -> Path:
+        """Get the actual local path for a remote path (filesystem-specific)"""
+        return self._get_full_path(remote_path)
+>>>>>>> parent of ea5206d (Refactor deployment logic to simplify component handling; improve error messages and enhance verification process)

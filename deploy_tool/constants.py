@@ -1,6 +1,7 @@
 """Global constants for deploy-tool"""
 
 from enum import Enum, auto
+import re
 
 # Version related
 MANIFEST_VERSION = "1.0"
@@ -90,6 +91,31 @@ PROGRESS_BAR_WIDTH = 50
 DEFAULT_STORAGE_TYPE = "filesystem"
 SUPPORTED_STORAGE_TYPES = ["filesystem", "bos", "s3"]
 
+# Storage overhead thresholds
+STORAGE_OVERHEAD_WARNING_SIZE = 100 * 1024 * 1024  # 100MB - Warn about copying overhead
+
+# Symlink constants
+SYMLINK_RELEASES_DIR = "releases"  # Directory for versioned releases
+SYMLINK_CURRENT_VERSION_FILE = ".current-version"  # File tracking current version
+
+# Post-publish instruction types
+INSTRUCTION_TYPE_GIT = "git"
+INSTRUCTION_TYPE_TRANSFER = "transfer"
+INSTRUCTION_TYPE_DEPLOY = "deploy"
+
+# Progress display for large files
+LARGE_FILE_THRESHOLD = 50 * 1024 * 1024  # 50MB - Show progress for large files
+VERY_LARGE_FILE_THRESHOLD = 500 * 1024 * 1024  # 500MB - Extra warnings
+
+# Deployment structure
+DEPLOYMENT_METADATA_FILE = ".deploy-metadata.json"
+DEPLOYMENT_STATE_FILE = ".deploy-state.json"
+DEPLOYMENT_LOCK_FILE = ".deploy.lock"
+
+# Version switching
+VERSION_SWITCH_BACKUP_SUFFIX = ".backup"
+VERSION_SWITCH_ROLLBACK_LIMIT = 3  # Keep last 3 versions for rollback
+
 # Error codes
 class ErrorCode:
     CONFIG_FORMAT_ERROR = "DT001"
@@ -117,8 +143,6 @@ ENV_BOS_SECRET_KEY = "BOS_SECRET_KEY"
 ENV_BOS_ENDPOINT = "BOS_ENDPOINT"
 
 # Validation patterns
-import re
-
 VERSION_PATTERN = re.compile(
     r"^(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)"
     r"(?:-(?P<prerelease>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"

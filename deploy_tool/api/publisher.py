@@ -124,46 +124,39 @@ class Publisher:
 
     async def _async_publish(self,
                              components: List[PublishComponent],
-                             release_version: str = None,
-                             release_name: str = None,
-                             force: bool = False,
-                             atomic: bool = True) -> PublishResult:
+                             release_version: Optional[str],
+                             release_name: Optional[str],
+                             force: bool,
+                             atomic: bool) -> PublishResult:
         """Async publish implementation"""
         start_time = time.time()
         published_components = []
         errors = []
 
         try:
-            # Validate all components exist
+            # Validate components
             for component in components:
-                # Find manifest
-                if component.manifest_path:
-                    manifest_path = Path(component.manifest_path)
-                else:
+                if not component.manifest_path:
+                    # Find manifest using ManifestEngine, not PathResolver
                     manifest_path = self.manifest_engine.find_manifest(
                         component.type,
                         component.version
                     )
+                    if not manifest_path:
+                        raise ComponentNotFoundError(
+                            f"Component not found: {component.type}:{component.version}"
+                        )
+                    component.manifest_path = str(manifest_path)
 
-                if not manifest_path or not manifest_path.exists():
-                    raise ComponentNotFoundError(
+            # Check for conflicts
+            if not force:
+                for component in components:
+                    if await self.storage_manager.component_exists(
                         component.type,
                         component.version
-                    )
-
-                component.manifest_path = str(manifest_path)
-
-            # Check if release already exists
-            if release_version:
-                release_path = self.path_resolver.get_release_path(release_version)
-                if release_path.exists() and not force:
-                    raise FileExistsError(str(release_path))
-
-                # Check remote
-                if await self.storage_manager.release_exists(release_version):
-                    if not force:
-                        raise PublishError(
-                            f"Release {release_version} already exists. "
+                    ):
+                        raise FileExistsError(
+                            f"Component already published: {component.type}:{component.version}. "
                             "Use --force to overwrite."
                         )
 
@@ -194,7 +187,7 @@ class Publisher:
             # Create release manifest if specified
             release_manifest_path = None
             if release_version:
-                release_manifest = self._create_release_manifest(
+                release_manifest = await self._create_release_manifest(
                     release_version,
                     release_name,
                     published_components
@@ -214,24 +207,37 @@ class Publisher:
                 # Provide git advice
                 self.git_advisor.provide_post_publish_advice(
                     release_version,
-                    [Path(c.component.manifest_path) for c in published_components]
+                    [Path(c.component.manifest_path) for c in published_components if c.success]
                 )
 
-            # Create result
+            # Get post-publish instructions
+            post_publish_instructions = []
+            if release_version and release_manifest_path:
+                # Ensure backend is initialized
+                await self.storage_manager.backend.initialize()
+                instructions = self.storage_manager.backend.get_post_publish_instructions(
+                    release_version,
+                    release_manifest_path.parent
+                )
+                post_publish_instructions = instructions
+
+            # Create result with FIXED parameter names
             return PublishResult(
                 success=len(errors) == 0,
+                published_components=published_components,
                 release_version=release_version,
-                release_manifest=str(release_manifest_path) if release_manifest_path else None,
-                components=published_components,
+                release_path=str(release_manifest_path) if release_manifest_path else None,
                 error=errors[0] if errors else None,
-                duration=time.time() - start_time
+                duration=time.time() - start_time,
+                post_publish_instructions=post_publish_instructions
             )
 
         except Exception as e:
+            # Return error result with FIXED parameter names
             return PublishResult(
                 success=False,
+                published_components=published_components,
                 release_version=release_version,
-                components=published_components,
                 error=str(e),
                 duration=time.time() - start_time
             )
@@ -269,7 +275,7 @@ class Publisher:
                     return ComponentPublishResult(
                         component=component,
                         success=True,
-                        storage_path=self.storage_manager._path_helper.get_archive_path(
+                        remote_path=self.storage_manager._path_helper.get_archive_path(
                             component.type,
                             component.version,
                             archive_path.name
@@ -281,7 +287,7 @@ class Publisher:
                 # TODO: Add progress reporting
                 pass
 
-            storage_path = await self.storage_manager.upload_component(
+            remote_path = await self.storage_manager.upload_component(
                 archive_path,
                 component.type,
                 component.version,
@@ -289,26 +295,27 @@ class Publisher:
             )
 
             # Upload manifest
-            await self.storage_manager.upload_manifest(
-                Path(component.manifest_path),
+            manifest_remote = self.storage_manager._path_helper.get_manifest_path(
                 component.type,
                 component.version
             )
 
-            # Update component info
-            component.archive_path = str(archive_path)
-            component.archive_size = archive_path.stat().st_size
-            component.storage_path = storage_path
+            await self.storage_manager.backend.upload(
+                Path(component.manifest_path),
+                manifest_remote
+            )
 
-            # Register in component registry
-            self.component_registry.register_component(
-                Path(component.manifest_path)
+            # Register as published
+            self.component_registry.register_published(
+                component.type,
+                component.version,
+                remote_path
             )
 
             return ComponentPublishResult(
                 component=component,
                 success=True,
-                storage_path=storage_path
+                remote_path=remote_path
             )
 
         except Exception as e:
@@ -319,49 +326,65 @@ class Publisher:
             )
 
     async def _rollback_published(self,
-                                  components: List[ComponentPublishResult]):
+                                  components: List[ComponentPublishResult]) -> None:
         """Rollback published components"""
         for comp_result in components:
-            if comp_result.success:
+            if comp_result.success and comp_result.remote_path:
                 try:
-                    await self.storage_manager.delete_component(
+                    # Delete from storage
+                    await self.storage_manager.backend.delete(
+                        comp_result.remote_path
+                    )
+
+                    # Unregister from registry
+                    self.component_registry.unregister_published(
                         comp_result.component.type,
                         comp_result.component.version
                     )
                 except Exception:
-                    # Ignore rollback errors
+                    # Log error but continue rollback
                     pass
 
-    def _create_release_manifest(self,
-                                 release_version: str,
-                                 release_name: str,
-                                 components: List[ComponentPublishResult]) -> ReleaseManifest:
+    async def _create_release_manifest(self,
+                                       release_version: str,
+                                       release_name: Optional[str],
+                                       components: List[ComponentPublishResult],
+                                       options: Dict[str, Any] = None) -> ReleaseManifest:
         """Create release manifest"""
-        # Create component references
+        options = options or {}
+
+        # Build component references
         component_refs = []
         for comp_result in components:
             if comp_result.success:
-                ref = ComponentRef(
+                manifest_path = self.path_resolver.get_manifest_path(
+                    comp_result.component.type,
+                    comp_result.component.version
+                )
+
+                comp_ref = ComponentRef(
                     type=comp_result.component.type,
                     version=comp_result.component.version,
-                    manifest=comp_result.component.manifest_path
+                    manifest=str(manifest_path.relative_to(self.path_resolver.project_root))
                 )
-                component_refs.append(ref)
+                component_refs.append(comp_ref)
 
-        # Create release info
-        release_info = {
-            'version': release_version,
+        # Build metadata
+        metadata = {
             'created_at': datetime.now().isoformat(),
+            'created_by': self._get_publisher_info(),
+            'options': options
         }
 
-        if release_name:
-            release_info['name'] = release_name
-
-        # Create release manifest
         return ReleaseManifest(
-            manifest_version=MANIFEST_VERSION,
-            release=release_info,
-            components=component_refs
+            version=MANIFEST_VERSION,
+            release={
+                'version': release_version,
+                'name': release_name or f"Release {release_version}",
+                'description': options.get('description', '')
+            },
+            components=component_refs,
+            metadata=metadata
         )
 
     def _save_release_manifest(self,
@@ -380,6 +403,17 @@ class Publisher:
             json.dump(release_manifest.to_dict(), f, indent=2, ensure_ascii=False)
 
         return release_path
+
+    def _get_publisher_info(self) -> Dict[str, str]:
+        """Get publisher information"""
+        import os
+        import socket
+
+        return {
+            'user': os.environ.get('USER', 'unknown'),
+            'host': socket.gethostname(),
+            'timestamp': datetime.now().isoformat()
+        }
 
 
 # Convenience function
@@ -404,7 +438,7 @@ def publish(components: List[Component] = None, **options) -> PublishResult:
 
     # Handle single component option
     if 'component' in options:
-        comp_spec = options['component']
+        comp_spec = options.pop('component')
         if isinstance(comp_spec, str) and ':' in comp_spec:
             # Parse "type:version" format
             comp_type, version = comp_spec.split(':', 1)

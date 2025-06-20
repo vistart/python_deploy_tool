@@ -1,13 +1,15 @@
-"""Interactive wizard utilities using Rich"""
+"""Interactive utilities for CLI commands"""
 
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import List, Dict, Any, Optional
 
 from rich.console import Console
-from rich.prompt import Prompt, Confirm, IntPrompt
+from rich.prompt import Prompt, Confirm
 from rich.table import Table
 
-from ...utils.file_utils import scan_directory
+from ...core import PathResolver, ManifestEngine, ComponentRegistry, ConfigGenerator
+from ...models.component import PublishComponent
+from ...models.config import PackageConfig, SourceConfig, CompressionConfig
 
 console = Console()
 
@@ -18,112 +20,95 @@ class PackWizard:
     def __init__(self, console: Console = None):
         self.console = console or Console()
 
-    async def run(self, initial_path: Optional[str] = None) -> Dict[str, Any]:
-        """Run the interactive pack wizard"""
-        self.console.print("[bold cyan]Package Configuration Wizard[/bold cyan]\n")
+    def run(self, path_resolver: PathResolver) -> Dict[str, Any]:
+        """Run interactive pack wizard"""
+        self.console.print("\n[bold cyan]Package Configuration Wizard[/bold cyan]\n")
 
         # Get package type
         package_type = Prompt.ask(
-            "Package type (e.g., model, config, data, runtime)",
+            "Package type (e.g., model, config, runtime)",
             default="model"
         )
 
-        # Get source path
-        if initial_path:
-            source_path = initial_path
-            self.console.print(f"Source path: {source_path}")
-        else:
-            source_path = Prompt.ask(
-                "Source path (file or directory)",
-                default="."
-            )
-
-        # Validate path
-        path = Path(source_path)
-        if not path.exists():
-            self.console.print(f"[red]Error: Path '{source_path}' does not exist[/red]")
-            raise ValueError(f"Path does not exist: {source_path}")
-
         # Get version
         version = Prompt.ask(
-            "Version number",
+            "Version",
             default="1.0.0"
         )
 
+        # Get source path
+        source_path = Prompt.ask(
+            "Source path (relative to project root)",
+            default="."
+        )
+
+        # Validate source path
+        abs_source = path_resolver.resolve(source_path)
+        if not abs_source.exists():
+            self.console.print(f"[red]Error: Path does not exist: {source_path}[/red]")
+            raise ValueError(f"Invalid source path: {source_path}")
+
         # Get package name
-        default_name = f"{Path('.').resolve().name}_{package_type}"
+        default_name = f"{path_resolver.project_root.name}_{package_type}"
         package_name = Prompt.ask(
             "Package name",
             default=default_name
         )
 
-        # Show detected files
-        if path.is_dir():
-            files = scan_directory(path)
-            if files:
-                self.console.print(f"\n[cyan]Found {len(files)} files:[/cyan]")
-                # Show first 10 files
-                for i, file in enumerate(files[:10]):
-                    self.console.print(f"  • {file}")
-                if len(files) > 10:
-                    self.console.print(f"  ... and {len(files) - 10} more files")
+        # Get description
+        description = Prompt.ask(
+            "Description (optional)",
+            default=""
+        )
 
         # Compression settings
-        use_custom_compression = Confirm.ask(
-            "\nCustomize compression settings?",
-            default=False
+        self.console.print("\n[bold]Compression Settings:[/bold]")
+        algorithm = Prompt.ask(
+            "Algorithm",
+            choices=["gzip", "bzip2", "xz", "lz4", "none"],
+            default="gzip"
         )
 
-        compression_config = {}
-        if use_custom_compression:
-            compression_config['algorithm'] = Prompt.ask(
-                "Compression algorithm",
-                choices=['gzip', 'bzip2', 'xz', 'lz4'],
-                default='gzip'
-            )
-            compression_config['level'] = IntPrompt.ask(
+        level = 6
+        if algorithm != "none":
+            level = int(Prompt.ask(
                 "Compression level (1-9)",
-                default=6
-            )
-
-        # Save configuration?
-        save_config = Confirm.ask(
-            "\nSave configuration for future use?",
-            default=True
-        )
-
-        config_path = None
-        if save_config:
-            default_config_path = f"deployment/package-configs/{package_type}.yaml"
-            config_path = Prompt.ask(
-                "Configuration file path",
-                default=default_config_path
-            )
+                default="6"
+            ))
 
         # Build configuration
         config = {
             'package': {
                 'type': package_type,
                 'name': package_name,
-                'version': version
+                'version': version,
+                'description': description
             },
             'source': {
-                'path': str(source_path)
+                'path': source_path
+            },
+            'compression': {
+                'algorithm': algorithm,
+                'level': level
             }
         }
-
-        if compression_config:
-            config['compression'] = compression_config
-
-        if save_config:
-            config['save_config'] = True
-            config['config_path'] = config_path
 
         # Show summary
         self._show_summary(config)
 
-        if not Confirm.ask("\n[cyan]Proceed with this configuration?[/cyan]", default=True):
-            raise KeyboardInterrupt("User cancelled")
+        # Save config?
+        save_config = Confirm.ask(
+            "\nSave this configuration for future use?",
+            default=True
+        )
+
+        if save_config:
+            config_name = Prompt.ask(
+                "Configuration name",
+                default=f"{package_type}.yaml"
+            )
+            config['save_config'] = True
+            config['config_path'] = f"deployment/package-configs/{config_name}"
 
         return config
 
@@ -159,45 +144,84 @@ class PublishWizard:
     def __init__(self, console: Console = None):
         self.console = console or Console()
 
-    async def select_components(self, available_components: List[Dict]) -> List[str]:
+    def select_components(self, path_resolver: PathResolver) -> List[PublishComponent]:
         """Interactive component selection"""
-        self.console.print("[bold]Select components to publish:[/bold]\n")
+        # Initialize component registry
+        manifest_engine = ManifestEngine(path_resolver)
+        registry = ComponentRegistry(path_resolver, manifest_engine)
 
-        # Show available components
+        # Get available components
+        available = registry.list_components()
+
+        if not available:
+            self.console.print("[yellow]No components available for publishing[/yellow]")
+            return []
+
+        # Display available components
+        self.console.print("\n[bold]Available components:[/bold]")
         table = Table()
-        table.add_column("#", style="dim")
+        table.add_column("#", style="dim", width=3)
         table.add_column("Type", style="cyan")
         table.add_column("Version", style="green")
         table.add_column("Created", style="yellow")
 
-        for i, comp in enumerate(available_components, 1):
-            table.add_row(
-                str(i),
-                comp['type'],
-                comp['version'],
-                comp.get('created', 'Unknown')
-            )
+        for i, comp in enumerate(available, 1):
+            # Get component info
+            info = registry.find_component(comp.type, comp.version)
+            created_str = info.created_at.strftime("%Y-%m-%d %H:%M") if info else "Unknown"
+            table.add_row(str(i), comp.type, comp.version, created_str)
 
         self.console.print(table)
 
-        # Get selections
-        selections = Prompt.ask(
-            "\nSelect components (comma-separated numbers or 'all')",
+        # Get user selection
+        selection = Prompt.ask(
+            "\nSelect components to publish (comma-separated numbers or 'all')",
             default="all"
         )
 
-        if selections.lower() == 'all':
-            return [f"{c['type']}:{c['version']}" for c in available_components]
+        if selection.lower() == 'all':
+            return [PublishComponent(type=c.type, version=c.version) for c in available]
 
-        # Parse selections
+        # Parse selection
         selected = []
-        for num in selections.split(','):
-            try:
-                idx = int(num.strip()) - 1
-                if 0 <= idx < len(available_components):
-                    comp = available_components[idx]
-                    selected.append(f"{comp['type']}:{comp['version']}")
-            except ValueError:
-                continue
+        try:
+            indices = [int(x.strip()) - 1 for x in selection.split(',')]
+            for idx in indices:
+                if 0 <= idx < len(available):
+                    comp = available[idx]
+                    selected.append(PublishComponent(type=comp.type, version=comp.version))
+        except (ValueError, IndexError):
+            self.console.print("[red]Invalid selection[/red]")
+            return []
 
         return selected
+
+    def get_release_info(self) -> Dict[str, str]:
+        """Get release information interactively"""
+        self.console.print("\n[bold]Release Information:[/bold]")
+
+        # Get release version
+        from datetime import datetime
+        default_version = datetime.now().strftime("%Y.%m.%d")
+        release_version = Prompt.ask(
+            "Release version",
+            default=default_version
+        )
+
+        # Get release name
+        release_name = Prompt.ask(
+            "Release name (optional)",
+            default=""
+        )
+
+        # Get description
+        description = Prompt.ask(
+            "Release description (optional)",
+            default=""
+        )
+
+        return {
+            'version': release_version,
+            'name': release_name,
+            'description': description
+        }

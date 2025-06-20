@@ -3,7 +3,6 @@
 import json
 import shutil
 import time
-from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
@@ -26,6 +25,7 @@ from ..models import (
     Component,
 )
 from ..models.manifest import ReleaseManifest
+from ..constants import DEPLOYMENT_METADATA_FILE
 
 
 class DeployService:
@@ -130,12 +130,13 @@ class DeployService:
             # 1. Prepare deployment directory
             await self._prepare_deploy_directory(deploy_path, options)
 
-            # 2. Deploy each component
+            # 2. Deploy each component to versioned directory
             for component in components:
                 try:
                     await self._deploy_single_component(
                         component,
                         deploy_path,
+                        release_version,
                         options
                     )
                     deployed_components.append(component)
@@ -145,14 +146,23 @@ class DeployService:
                         # Rollback deployed components
                         await self._rollback_components(
                             deployed_components,
-                            deploy_path
+                            deploy_path,
+                            release_version
                         )
 
                     raise DeployError(
                         f"Failed to deploy {component}: {str(e)}"
                     )
 
-            # 3. Save deployment metadata
+            # 3. Create/update symbolic links
+            await self._create_symlinks(
+                deployed_components,
+                deploy_path,
+                release_version,
+                options
+            )
+
+            # 4. Save deployment metadata
             await self._save_deployment_metadata(
                 deploy_path,
                 deployed_components,
@@ -160,24 +170,27 @@ class DeployService:
                 release_version
             )
 
-            # 4. Verify deployment if requested
+            # 5. Verify deployment if requested
             verification = None
             if options.get('verify', True):
                 verification = await self._verify_deployment(
                     deployed_components,
-                    deploy_path
+                    deploy_path,
+                    release_version
                 )
 
                 if not verification.success and options.get('rollback_on_failure', True):
+                    # Rollback if verification failed
                     await self._rollback_components(
                         deployed_components,
-                        deploy_path
+                        deploy_path,
+                        release_version
                     )
                     raise DeployError(
-                        f"Deployment verification failed: {verification.error or 'Unknown error'}"
+                        f"Deployment verification failed: {verification.errors[0]}"
                     )
 
-            # 5. Create result
+            # 6. Create result
             return DeployResult(
                 success=True,
                 deploy_type=deploy_type,
@@ -218,7 +231,8 @@ class DeployService:
 
         return ReleaseManifest.from_dict(data)
 
-    def _extract_components_from_release(self, release_manifest: ReleaseManifest) -> List[Component]:
+    def _extract_components_from_release(self,
+                                         release_manifest: ReleaseManifest) -> List[Component]:
         """Extract component list from release manifest"""
         components = []
 
@@ -233,51 +247,204 @@ class DeployService:
         return components
 
     def _get_deploy_path(self, target: str, options: Dict[str, Any]) -> Path:
-        """Get deployment path"""
-        # If target is a path, use it directly
-        if target.startswith('/') or target.startswith('./') or target.startswith('..'):
-            return Path(target).resolve()
+        """Get deployment path for target"""
+        # Check if target is a path
+        if Path(target).is_absolute() or target.startswith(('./', '../')):
+            return self.path_resolver.resolve(target)
 
-        # Otherwise, treat as a named target
-        # TODO: Implement named target resolution
-        return Path(target).resolve()
+        # Otherwise treat as named target
+        if target == "default":
+            default_path = options.get('default_path', './deploy')
+            return self.path_resolver.resolve(default_path)
+        else:
+            # Named target
+            return self.path_resolver.resolve(f'./deploy/{target}')
 
-    async def _prepare_deploy_directory(self, deploy_path: Path, options: Dict[str, Any]) -> None:
+    async def _prepare_deploy_directory(self,
+                                        deploy_path: Path,
+                                        options: Dict[str, Any]) -> None:
         """Prepare deployment directory"""
+        # Create if not exists
         deploy_path.mkdir(parents=True, exist_ok=True)
+
+<<<<<<< HEAD
+        # Create releases subdirectory
+        releases_dir = deploy_path / "releases"
+        releases_dir.mkdir(exist_ok=True)
 
         # Check if directory is empty (unless force is specified)
         if not options.get('force', False):
-            if any(deploy_path.iterdir()):
-                raise DeployError(
-                    f"Deployment directory is not empty: {deploy_path}. "
-                    "Use --force to override."
-                )
+            # Only check non-releases content
+            non_releases_content = [p for p in deploy_path.iterdir()
+                                    if p.name not in ['releases', DEPLOYMENT_METADATA_FILE]]
+            if non_releases_content:
+                # Check if symlinks exist
+                symlinks_exist = any(p.is_symlink() for p in non_releases_content)
+                if not symlinks_exist:
+                    raise DeployError(
+                        f"Deployment directory contains non-symlink files: {deploy_path}. "
+                        "Use --force to override."
+                    )
+=======
+        # Clean if requested
+        if options.get('clean', False):
+            # Remove all contents except metadata
+            for item in deploy_path.iterdir():
+                if item.name not in ['.deploy-metadata', '.manifests', '.archives']:
+                    if item.is_dir():
+                        shutil.rmtree(item)
+                    else:
+                        item.unlink()
+>>>>>>> parent of ea5206d (Refactor deployment logic to simplify component handling; improve error messages and enhance verification process)
 
     async def _deploy_single_component(self,
                                        component: Component,
                                        deploy_path: Path,
+                                       release_version: Optional[str],
                                        options: Dict[str, Any]) -> None:
-        """Deploy a single component"""
+<<<<<<< HEAD
+        """Deploy a single component to versioned directory"""
         # Get archive path
         archive_path = self.path_resolver.get_archive_path(
+=======
+        """Deploy single component"""
+        # 1. Get manifest
+        manifest_path = await self._get_component_manifest(component, deploy_path)
+        manifest = self.manifest_engine.load_manifest(manifest_path)
+
+        # 2. Download archive if needed
+        archive_path = await self._download_component_archive(
+            component,
+            manifest,
+            deploy_path,
+            options
+        )
+
+        # 3. Verify archive integrity
+        validation_result = self.validation_engine.validate_archive_integrity(
+            archive_path,
+            manifest.archive['checksum']['sha256']
+        )
+
+        if not validation_result.is_valid:
+            raise ValidationError(validation_result.errors[0])
+
+        # 4. Extract archive
+        component_path = deploy_path / component.type / component.version
+        await self._extract_component(
+            archive_path,
+            component_path,
+            options
+        )
+
+        # 5. Save component manifest in deployment
+        deploy_manifest_path = component_path / '.manifest.json'
+        shutil.copy2(manifest_path, deploy_manifest_path)
+
+    async def _get_component_manifest(self,
+                                      component: Component,
+                                      deploy_path: Path) -> Path:
+        """Get component manifest"""
+        # Use provided path if available
+        if component.manifest_path:
+            manifest_path = Path(component.manifest_path)
+            if manifest_path.exists():
+                return manifest_path
+
+        # Try to find locally
+        manifest_path = self.manifest_engine.find_manifest(
+>>>>>>> parent of ea5206d (Refactor deployment logic to simplify component handling; improve error messages and enhance verification process)
             component.type,
             component.version
         )
 
+<<<<<<< HEAD
         if not archive_path.exists():
             # Download from storage
             success = await self.storage_manager.download_component(
                 component.type,
                 component.version,
+                archive_path.name,
                 archive_path
+=======
+        if manifest_path:
+            return manifest_path
+
+        # Download from storage
+        temp_manifest = deploy_path / ".manifests" / f"{component.type}-{component.version}.manifest.json"
+        temp_manifest.parent.mkdir(parents=True, exist_ok=True)
+
+        success = await self.storage_manager.download_manifest(
+            component.type,
+            component.version,
+            temp_manifest
+        )
+
+        if not success:
+            raise ComponentNotFoundError(component.type, component.version)
+
+        return temp_manifest
+
+    async def _download_component_archive(self,
+                                          component: Component,
+                                          manifest: Any,
+                                          deploy_path: Path,
+                                          options: Dict[str, Any]) -> Path:
+        """Download component archive if needed"""
+        archive_filename = manifest.archive['filename']
+        archive_path = deploy_path / ".archives" / archive_filename
+        archive_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Check if already exists and valid
+        if archive_path.exists():
+            # Verify checksum
+            validation_result = self.validation_engine.validate_archive_integrity(
+                archive_path,
+                manifest.archive['checksum']['sha256']
+>>>>>>> parent of ea5206d (Refactor deployment logic to simplify component handling; improve error messages and enhance verification process)
             )
 
-            if not success:
-                raise ComponentNotFoundError(component.type, component.version)
+            if validation_result.is_valid:
+                return archive_path
 
-        # Extract to deployment directory
-        component_path = deploy_path / component.type / component.version
+        # Download with progress
+        def progress_callback(downloaded: int, total: int):
+            # TODO: Integrate with progress reporting
+            pass
+
+        success = await self.storage_manager.download_component(
+            component.type,
+            component.version,
+            archive_filename,
+            archive_path,
+            callback=progress_callback
+        )
+
+        if not success:
+            raise DeployError(f"Failed to download component {component}")
+
+        return archive_path
+
+    async def _extract_component(self,
+                                 archive_path: Path,
+                                 component_path: Path,
+                                 options: Dict[str, Any]) -> None:
+        """Extract component archive"""
+        # Clean existing if requested
+        if component_path.exists() and options.get('overwrite', True):
+            shutil.rmtree(component_path)
+
+<<<<<<< HEAD
+        # Extract to versioned deployment directory
+        if release_version:
+            # Deploy to releases/release_version/component_type/component_version/
+            component_path = deploy_path / "releases" / release_version / component.type / component.version
+        else:
+            # Direct component deployment: component_type/component_version/
+            component_path = deploy_path / component.type / component.version
+
+=======
+>>>>>>> parent of ea5206d (Refactor deployment logic to simplify component handling; improve error messages and enhance verification process)
         component_path.mkdir(parents=True, exist_ok=True)
 
         # Use TarProcessor to extract
@@ -290,88 +457,233 @@ class DeployService:
         if not success:
             raise DeployError(f"Failed to extract archive: {archive_path}")
 
+    async def _create_symlinks(self,
+                               components: List[Component],
+                               deploy_path: Path,
+                               release_version: Optional[str],
+                               options: Dict[str, Any]) -> None:
+        """Create symbolic links to maintain consistent paths"""
+        for component in components:
+            # Source: versioned directory
+            if release_version:
+                source = deploy_path / "releases" / release_version / component.type / component.version
+            else:
+                source = deploy_path / component.type / component.version
+
+            # Target: top-level symlink
+            target = deploy_path / component.type
+
+            # Remove existing symlink if it exists
+            if target.exists() or target.is_symlink():
+                if target.is_symlink():
+                    target.unlink()
+                elif options.get('force', False):
+                    shutil.rmtree(target)
+                else:
+                    raise DeployError(
+                        f"Directory exists and is not a symlink: {target}. "
+                        "Use --force to override."
+                    )
+
+            # Create relative symlink
+            if release_version:
+                relative_source = Path(f"releases/{release_version}/{component.type}/{component.version}")
+            else:
+                relative_source = Path(f"{component.type}/{component.version}")
+
+            target.symlink_to(relative_source)
+
     async def _save_deployment_metadata(self,
                                         deploy_path: Path,
                                         components: List[Component],
                                         deploy_type: str,
                                         release_version: Optional[str]) -> None:
         """Save deployment metadata"""
-        metadata_path = deploy_path / '.deploy-metadata' / 'deployment.json'
-        metadata_path.parent.mkdir(parents=True, exist_ok=True)
-
         metadata = {
             'deploy_type': deploy_type,
-            'deploy_time': datetime.now().isoformat(),
+            'release_version': release_version,
+            'deployed_at': datetime.now().isoformat(),
             'components': [
                 {
                     'type': c.type,
-                    'version': c.version,
+                    'version': c.version
                 }
                 for c in components
-            ],
+            ]
         }
 
-        if release_version:
-            metadata['release_version'] = release_version
-
-        with open(metadata_path, 'w') as f:
+        metadata_file = deploy_path / DEPLOYMENT_METADATA_FILE
+        with open(metadata_file, 'w') as f:
             json.dump(metadata, f, indent=2)
 
     async def _verify_deployment(self,
                                  components: List[Component],
-                                 deploy_path: Path) -> VerifyResult:
-        """Verify deployment integrity"""
+                                 deploy_path: Path,
+                                 release_version: Optional[str]) -> VerifyResult:
+        """Verify deployment with symlink structure"""
         errors = []
         warnings = []
         verified_files = 0
         total_files = 0
 
         for component in components:
-            component_path = deploy_path / component.type / component.version
+            # Check versioned directory
+            if release_version:
+                component_path = deploy_path / "releases" / release_version / component.type / component.version
+            else:
+                component_path = deploy_path / component.type / component.version
 
             if not component_path.exists():
-                errors.append(f"Component path not found: {component_path}")
+                errors.append(
+                    f"Component path not found: {component_path}"
+                )
                 continue
 
-            # Verify manifest exists
-            manifest_path = component_path / '.manifest.json'
-            if not manifest_path.exists():
-                errors.append(f"Manifest not found for {component}")
-                continue
+            # Check symlink
+            symlink_path = deploy_path / component.type
+            if not symlink_path.exists():
+                errors.append(
+                    f"Symlink not found: {symlink_path}"
+                )
+            elif not symlink_path.is_symlink():
+                warnings.append(
+                    f"Path exists but is not a symlink: {symlink_path}"
+                )
 
-            # Count and verify files
+            # Count files
             for file_path in component_path.rglob('*'):
-                if file_path.is_file() and file_path.name != '.manifest.json':
+                if file_path.is_file():
                     total_files += 1
+                    # Simple existence check
                     if file_path.exists():
                         verified_files += 1
                     else:
-                        errors.append(f"File missing: {file_path}")
+                        errors.append(
+                            f"File missing: {file_path}"
+                        )
 
-        # Merge errors and warnings into issues list
-        issues = errors + [f"Warning: {w}" for w in warnings]
-
-        # Return VerifyResult with correct parameters
         return VerifyResult(
             success=len(errors) == 0,
-            component_type="deployment",  # Use "deployment" as type for deployment verification
-            version="multi-component",    # Use generic version for multi-component deployment
-            checksum_valid=True,          # Simplified - assume checksum is valid
+<<<<<<< HEAD
+            component_type="deployment",
+            version="multi-component",
+            checksum_valid=True,
             files_complete=(verified_files == total_files),
-            manifest_valid=all(
-                (deploy_path / c.type / c.version / '.manifest.json').exists()
-                for c in components
-            ),
+            manifest_valid=True,
             issues=issues,
-            error=errors[0] if errors else None  # First error as main error message
+            error=errors[0] if errors else None
+=======
+            target_type="deployment",
+            errors=errors,
+            warnings=warnings,
+            verified_files=verified_files,
+            total_files=total_files
+>>>>>>> parent of ea5206d (Refactor deployment logic to simplify component handling; improve error messages and enhance verification process)
         )
 
     async def _rollback_components(self,
                                    components: List[Component],
-                                   deploy_path: Path) -> None:
+                                   deploy_path: Path,
+                                   release_version: Optional[str]) -> None:
         """Rollback deployed components"""
         for component in components:
-            component_path = deploy_path / component.type / component.version
+            # Remove versioned directory
+            if release_version:
+                component_path = deploy_path / "releases" / release_version / component.type / component.version
+            else:
+                component_path = deploy_path / component.type / component.version
 
             if component_path.exists():
                 shutil.rmtree(component_path, ignore_errors=True)
+
+<<<<<<< HEAD
+            # Remove symlink
+            symlink_path = deploy_path / component.type
+            if symlink_path.is_symlink():
+                symlink_path.unlink()
+
+    # Additional methods for version switching
+    async def switch_version(self,
+                             target: str,
+                             release_version: str,
+                             options: Optional[Dict[str, Any]] = None) -> bool:
+        """
+        Switch to a different deployed version
+
+        Args:
+            target: Deployment target
+            release_version: Release version to switch to
+            options: Switch options
+
+        Returns:
+            True if successful
+        """
+        deploy_path = self._get_deploy_path(target, options or {})
+        release_path = deploy_path / "releases" / release_version
+
+        if not release_path.exists():
+            raise ReleaseNotFoundError(f"Release {release_version} not found in {deploy_path}")
+
+        # Load deployment metadata to get components
+        metadata_file = deploy_path / DEPLOYMENT_METADATA_FILE
+        if metadata_file.exists():
+            with open(metadata_file, 'r') as f:
+                metadata = json.load(f)
+
+            # Update symlinks for each component
+            for component_info in metadata.get('components', []):
+                component_type = component_info['type']
+
+                # Find the component version in the target release
+                component_dir = release_path / component_type
+                if component_dir.exists():
+                    versions = [d for d in component_dir.iterdir() if d.is_dir()]
+                    if versions:
+                        # Use the first (usually only) version
+                        version_dir = versions[0]
+
+                        # Update symlink
+                        symlink = deploy_path / component_type
+                        if symlink.is_symlink():
+                            symlink.unlink()
+
+                        relative_source = Path(f"releases/{release_version}/{component_type}/{version_dir.name}")
+                        symlink.symlink_to(relative_source)
+
+            # Update metadata with new release version
+            metadata['release_version'] = release_version
+            metadata['switched_at'] = datetime.now().isoformat()
+
+            with open(metadata_file, 'w') as f:
+                json.dump(metadata, f, indent=2)
+
+            return True
+
+        return False
+
+    async def list_deployed_versions(self, target: str) -> List[str]:
+        """
+        List all deployed versions at target
+
+        Args:
+            target: Deployment target
+
+        Returns:
+            List of deployed release versions
+        """
+        deploy_path = self._get_deploy_path(target, {})
+        releases_dir = deploy_path / "releases"
+
+        if not releases_dir.exists():
+            return []
+
+        versions = []
+        for item in releases_dir.iterdir():
+            if item.is_dir():
+                versions.append(item.name)
+
+        return sorted(versions)
+=======
+
+from datetime import datetime
+>>>>>>> parent of ea5206d (Refactor deployment logic to simplify component handling; improve error messages and enhance verification process)

@@ -56,8 +56,8 @@ class StorageBackend(ABC):
         Download file from storage
 
         Args:
-            remote_path: Remote storage path
-            local_path: Local file path
+            remote_path: Remote path in storage
+            local_path: Local file path to save to
             callback: Progress callback (bytes_transferred, total_bytes)
 
         Returns:
@@ -71,10 +71,10 @@ class StorageBackend(ABC):
         Check if file exists in storage
 
         Args:
-            remote_path: Remote storage path
+            remote_path: Remote path to check
 
         Returns:
-            True if exists
+            True if file exists
         """
         pass
 
@@ -84,7 +84,7 @@ class StorageBackend(ABC):
         Delete file from storage
 
         Args:
-            remote_path: Remote storage path
+            remote_path: Remote path to delete
 
         Returns:
             True if successful
@@ -94,10 +94,10 @@ class StorageBackend(ABC):
     @abstractmethod
     async def list(self, prefix: str = "") -> List[str]:
         """
-        List files in storage
+        List files in storage with given prefix
 
         Args:
-            prefix: Path prefix to filter results
+            prefix: Path prefix to filter by
 
         Returns:
             List of file paths
@@ -110,85 +110,28 @@ class StorageBackend(ABC):
         Get file metadata
 
         Args:
-            remote_path: Remote storage path
+            remote_path: Remote path
 
         Returns:
-            File metadata or None if not found
+            Metadata dictionary or None if not found
         """
         pass
 
-    async def upload_directory(self,
-                               local_dir: Path,
-                               remote_prefix: str,
-                               callback: Optional[Callable[[str, int, int], None]] = None) -> bool:
+    @abstractmethod
+    def get_post_publish_instructions(self,
+                                      release_version: str,
+                                      published_path: Path) -> List[str]:
         """
-        Upload entire directory to storage
+        Get storage-specific post-publish instructions
 
         Args:
-            local_dir: Local directory path
-            remote_prefix: Remote path prefix
-            callback: Progress callback (filename, bytes_transferred, total_bytes)
+            release_version: Version that was published
+            published_path: Local path where files were published
 
         Returns:
-            True if all uploads successful
+            List of instruction strings for the user
         """
-        if not local_dir.is_dir():
-            raise ValueError(f"Not a directory: {local_dir}")
-
-        success = True
-        for local_file in local_dir.rglob("*"):
-            if local_file.is_file():
-                relative_path = local_file.relative_to(local_dir)
-                remote_path = f"{remote_prefix}/{relative_path}".replace("\\", "/")
-
-                file_callback = None
-                if callback:
-                    file_callback = lambda transferred, total: callback(
-                        str(relative_path), transferred, total
-                    )
-
-                if not await self.upload(local_file, remote_path, file_callback):
-                    success = False
-
-        return success
-
-    async def download_directory(self,
-                                 remote_prefix: str,
-                                 local_dir: Path,
-                                 callback: Optional[Callable[[str, int, int], None]] = None) -> bool:
-        """
-        Download directory from storage
-
-        Args:
-            remote_prefix: Remote path prefix
-            local_dir: Local directory path
-            callback: Progress callback (filename, bytes_transferred, total_bytes)
-
-        Returns:
-            True if all downloads successful
-        """
-        # List all files with prefix
-        files = await self.list(remote_prefix)
-
-        success = True
-        for remote_path in files:
-            # Calculate local path
-            relative_path = remote_path[len(remote_prefix):].lstrip("/")
-            local_path = local_dir / relative_path
-
-            # Ensure directory exists
-            local_path.parent.mkdir(parents=True, exist_ok=True)
-
-            file_callback = None
-            if callback:
-                file_callback = lambda transferred, total: callback(
-                    relative_path, transferred, total
-                )
-
-            if not await self.download(remote_path, local_path, file_callback):
-                success = False
-
-        return success
+        pass
 
     async def close(self) -> None:
         """Close storage backend connections"""

@@ -1,3 +1,4 @@
+﻿# deploy_tool/plugins/__init__.py
 """Plugin system for deploy-tool"""
 
 from .base import (

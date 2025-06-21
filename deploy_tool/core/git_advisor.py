@@ -1,3 +1,4 @@
+﻿# deploy_tool/core/git_advisor.py
 """Git advisor for providing Git operation suggestions"""
 
 import subprocess

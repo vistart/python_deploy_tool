@@ -1,3 +1,4 @@
+﻿# deploy_tool/models/component.py
 """Component models"""
 
 from dataclasses import dataclass, field

@@ -1,3 +1,4 @@
+﻿# deploy_tool/plugins/builtin/__init__.py
 """Built-in plugins for deploy-tool"""
 
 from .git_integration import GitIntegrationPlugin

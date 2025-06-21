@@ -1,3 +1,4 @@
+﻿# deploy_tool/core/__init__.py
 """Core functionality for deploy-tool"""
 
 from .path_resolver import PathResolver, PathType

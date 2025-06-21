@@ -1,3 +1,4 @@
+﻿# deploy_tool/core/config_generator.py
 """Configuration generator for intelligent config creation"""
 
 from collections import Counter

@@ -1,3 +1,4 @@
+﻿# deploy_tool/models/__init__.py
 """Data models for deploy-tool"""
 
 from .component import Component, PublishComponent

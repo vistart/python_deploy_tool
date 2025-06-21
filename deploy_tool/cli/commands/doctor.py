@@ -1,3 +1,4 @@
+﻿# deploy_tool/cli/commands/doctor.py
 """System diagnostic command"""
 
 import os

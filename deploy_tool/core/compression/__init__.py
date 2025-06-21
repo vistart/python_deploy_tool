@@ -1,3 +1,4 @@
+﻿# deploy_tool/core/compression/__init__.py
 """Compression module for deploy-tool"""
 
 from .tar_processor import TarProcessor, CompressionType

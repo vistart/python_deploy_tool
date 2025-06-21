@@ -1,3 +1,4 @@
+﻿# deploy_tool/utils/hash_utils.py
 """Hash calculation utilities"""
 
 import hashlib

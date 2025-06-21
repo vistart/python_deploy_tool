@@ -1,3 +1,4 @@
+﻿# deploy_tool/templates/__init__.py
 """Built-in templates for deploy-tool"""
 
 from pathlib import Path

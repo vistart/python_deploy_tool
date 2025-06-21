@@ -1,3 +1,4 @@
+﻿# deploy_tool/core/path_resolver.py
 """Path resolver - Core component for unified path management"""
 
 import os

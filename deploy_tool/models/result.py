@@ -1,3 +1,4 @@
+﻿# deploy_tool/models/result.py
 """Result models for deploy-tool operations"""
 
 from dataclasses import dataclass, field

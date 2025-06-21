@@ -1,3 +1,4 @@
+﻿# deploy_tool/models/manifest.py
 """Manifest models"""
 
 from dataclasses import dataclass, field

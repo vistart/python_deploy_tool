@@ -1,3 +1,4 @@
+﻿# deploy_tool/cli/commands/publish.py
 """Publish command implementation"""
 
 import sys

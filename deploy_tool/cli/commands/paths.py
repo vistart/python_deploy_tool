@@ -1,3 +1,4 @@
+﻿# deploy_tool/cli/commands/paths.py
 """Path management command"""
 
 import sys

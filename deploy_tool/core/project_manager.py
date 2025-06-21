@@ -1,3 +1,4 @@
+﻿# deploy_tool/core/project_manager.py
 """Project lifecycle management"""
 
 import shutil

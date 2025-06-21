@@ -1,3 +1,4 @@
+﻿# deploy_tool/cli/decorators/dual_mode.py
 """Dual-mode decorator for supporting both CLI and programmatic usage"""
 
 import functools

@@ -1,3 +1,4 @@
+﻿# deploy_tool/plugins/builtin/hooks.py
 """Lifecycle hooks plugin for custom scripts"""
 
 import asyncio

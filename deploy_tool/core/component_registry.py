@@ -1,3 +1,4 @@
+﻿# deploy_tool/core/component_registry.py
 """Component registry for managing component versions and dependencies"""
 
 import json

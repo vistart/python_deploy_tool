@@ -1,3 +1,4 @@
+﻿# deploy_tool/services/conflict_resolver.py
 """Conflict resolution service"""
 
 import shutil

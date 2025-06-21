@@ -1,3 +1,4 @@
+﻿# deploy_tool/core/compression/adapters.py
 """Compression adapter interfaces"""
 
 from abc import ABC, abstractmethod

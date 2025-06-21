@@ -1,3 +1,4 @@
+﻿# deploy_tool/core/compression/tar_processor.py
 """Tar processor integration for deploy-tool"""
 
 import sys

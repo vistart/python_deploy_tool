@@ -1,3 +1,4 @@
+﻿# deploy_tool/plugins/builtin/git_integration.py
 """Git integration plugin"""
 
 from pathlib import Path

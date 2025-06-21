@@ -1,3 +1,4 @@
+﻿# deploy_tool/cli/commands/component.py
 """Component management command"""
 
 import sys

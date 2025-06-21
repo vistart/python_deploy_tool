@@ -1,3 +1,4 @@
+﻿# deploy_tool/models/release.py
 """Release models for the deployment tool"""
 
 from dataclasses import dataclass, field

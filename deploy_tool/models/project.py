@@ -1,3 +1,4 @@
+﻿# deploy_tool/models/project.py
 """Project information models"""
 
 from dataclasses import dataclass, field

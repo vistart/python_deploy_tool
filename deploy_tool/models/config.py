@@ -1,3 +1,4 @@
+﻿# deploy_tool/models/config.py
 """Configuration models"""
 
 from dataclasses import dataclass, field

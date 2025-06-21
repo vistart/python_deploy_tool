@@ -1,3 +1,4 @@
+﻿# deploy_tool/cli/commands/release.py
 """Release management commands"""
 
 import sys

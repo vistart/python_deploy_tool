@@ -1,4 +1,5 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
+# deploy_tool/core/compression/tar_compressor.py
 """
 Async Tar Compressor/Decompressor - Support progress bar display and intelligent interrupt handling
 Supported compression algorithms: gzip, bzip2, xz/lzma, lz4

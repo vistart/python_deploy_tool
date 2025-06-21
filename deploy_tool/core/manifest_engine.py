@@ -1,3 +1,4 @@
+﻿# deploy_tool/core/manifest_engine.py
 """Manifest engine for generating and validating manifest files"""
 
 import hashlib

@@ -1,3 +1,4 @@
+﻿# deploy_tool/constants.py
 """Global constants for deploy-tool"""
 
 from enum import Enum, auto

@@ -1,3 +1,4 @@
+﻿# deploy_tool/plugins/base.py
 """Plugin system base classes and manager"""
 
 import logging
